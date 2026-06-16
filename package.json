@@ -1,0 +1,25 @@
+{
+  "name": "tradrly-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Assistant IA local multi-couches (UI Electron/React, Orchestration Node, IA Python FastAPI, Intégrations, Données locales)",
+  "workspaces": [
+    "apps/ui",
+    "apps/orchestrator",
+    "services"
+  ],
+  "scripts": {
+    "dev": "concurrently -n AI,ORCH,UI -c magenta,cyan,green \"npm:dev:ai\" \"npm:dev:orchestrator\" \"npm:dev:ui\"",
+    "dev:ui": "npm --workspace apps/ui run dev",
+    "dev:orchestrator": "npm --workspace apps/orchestrator run dev",
+    "dev:ai": "python ai/run.py",
+    "setup": "npm install && pip install -r ai/requirements.txt",
+    "lint": "echo \"(configurer eslint par workspace)\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@tradrly/services",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "Adaptateurs d'intégrations externes (Slack, Teams, Discord, Notion, Gmail, Git, Calendar)."
+}

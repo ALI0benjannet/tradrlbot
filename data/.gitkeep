@@ -1,0 +1,4 @@
+# Conserver le dossier dans Git sans committer les données.
+*
+!.gitkeep
+!README.md

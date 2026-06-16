@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Données locales
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/chroma/
+data/cache/
+
+# Secrets
+.env
+.env.local
+*.key
+*.pem
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
