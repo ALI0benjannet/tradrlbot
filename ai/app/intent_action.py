@@ -32,8 +32,8 @@ TARGET_KEYWORDS = {
     "projects": r"\b(projet|chantier|suivi)\b",
 }
 
-ADD_KEYWORDS = r"\b(ajoute|ajouter|cr[ée]e?|cr[ée]er|nouvelle?|nouveau|planifie|programme|note|j'ai|jai|met|mets|ajout)\b"
-DELETE_KEYWORDS = r"\b(supprime|supprimer|enl[èe]ve|enlever|retire|retirer|efface|effacer|annule|annuler|supprim)\b"
+ADD_KEYWORDS = r"\b(ajoute|ajouter|cr[ée]e?|cr[ée]er|nouvelle?|nouveau|planifie|programme|note|j'ai|jai|met|mets|ajout|d[ée]marr?e?r?|d[ée]mare?r?|lance?r?|commenc[er]+|start|démarre)\b"
+DELETE_KEYWORDS = r"\b(supprime|supprimer|enl[èe]ve|enlever|retire|retirer|efface|effacer|annule|annuler|supprim|arr[êe]te|arr[êe]ter|arrete|stop|stoppe|stopper|termine|coupe|finis)\b"
 COMPLETE_KEYWORDS = r"\b(termin[ée]?|fini[es]?|fait[es]?|coch[ée]?|valide|valider|accompli)\b"
 LIST_KEYWORDS = r"\b(liste|affiche|montre|voir|quels?|quelles?)\b"
 
@@ -59,6 +59,12 @@ SYSTEM_INSTRUCTION = (
     '{"action":"add","target":"agenda","content":"réunion lundi à 14h avec Paul","query":""}\n'
     'Phrase: "rappelle-moi de prendre mes clés à 18h" -> '
     '{"action":"add","target":"reminders","content":"prendre mes clés à 18h","query":""}\n'
+    'Phrase: "démarre un focus de 50 min" -> '
+    '{"action":"add","target":"pomodoro","content":"focus de 50 min","query":""}\n'
+    'Phrase: "démarre un focus mode" (sans durée) -> '
+    '{"action":"add","target":"pomodoro","content":"focus","query":""}\n'
+    'Phrase: "arrête le focus mode" -> '
+    '{"action":"delete","target":"pomodoro","content":"","query":""}\n'
 )
 
 

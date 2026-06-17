@@ -6,7 +6,7 @@ const FEATURES = [
   { id: 'tasks',     label: 'Gérer tâches et to-do lists', icon: '✅', color: '#a855f7', placeholder: 'Écrire une tâche…' },
   { id: 'reminders', label: 'Rappels intelligents',        icon: '⏰', color: '#f59e0b', placeholder: "Ex : J'ai pause chaque jour à 13h…" },
   { id: 'agenda',    label: 'Agenda & réunions',           icon: '📅', color: '#3b82f6', placeholder: 'Ex : Réunion le 17/06/2026 à 15h20… ou « sport chaque semaine à 18h »' },
-  { id: 'pomodoro',  label: 'Pomodoro & focus mode',       icon: '🍅', color: '#ef4444', placeholder: 'Démarrer une session focus…' },
+  { id: 'pomodoro',  label: 'Pomodoro & focus mode',       icon: '🍅', color: '#ef4444', placeholder: 'Ex : démarrer un focus de 50 min…' },
   { id: 'projects',  label: 'Suivi de projets',            icon: '📊', color: '#22c55e', placeholder: 'Écrire un projet à suivre…' },
 ];
 
@@ -92,6 +92,35 @@ function parseDateTime(raw) {
   return { label, at: d.toISOString(), hasDate: !!dm, recurrence: rec };
 }
 
+// Extrait une DURÉE en minutes depuis un texte libre (tolère les fautes de frappe).
+// Gère : "50min", "50 minutes", "50m", "1h30", "2h", "25", "une demi-heure"…
+function parseDuration(raw) {
+  const t = raw.toLowerCase();
+  if (/\bdemi[- ]?heure\b/.test(t)) return 30;
+  // "1h30", "1 h 30"
+  const hm = t.match(/(\d{1,2})\s*h\s*(\d{1,2})/);
+  if (hm) return parseInt(hm[1], 10) * 60 + parseInt(hm[2], 10);
+  // "2h", "2 heures" (sans minutes derrière)
+  const h = t.match(/(\d{1,2})\s*(?:h\b|heures?\b)/);
+  if (h) return parseInt(h[1], 10) * 60;
+  // "50 min", "50min", "50 minutes", "50m" (tolère "mindre", "minute", etc.)
+  const m = t.match(/(\d{1,3})\s*m/);
+  if (m) return parseInt(m[1], 10);
+  // juste un nombre -> minutes
+  const n = t.match(/\b(\d{1,3})\b/);
+  if (n) return parseInt(n[1], 10);
+  return 25; // défaut Pomodoro
+}
+
+// Nettoie le libellé d'une session focus (retire verbes, "focus", durée…)
+function cleanFocusLabel(raw) {
+  return raw
+    .replace(/(\d{1,3})\s*(?:h\s*\d{0,2}|min(?:ute)?s?|m|heures?)/gi, '')
+    .replace(/\b(d[ée]marr?e?r?|d[ée]mare?r?|lance?r?|commenc\w*|start|focus|mode|session|pomodoro|concentration|un|une|de|d'|pendant|pour)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const sameDay = (a, b) =>
   a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
@@ -118,6 +147,7 @@ export default function Productivity({ onSend }) {
   const [now, setNow] = useState(Date.now());          // pour le compte à rebours
   const [ringingFor, setRingingFor] = useState(null);  // label du rappel qui sonne
   const [feedback, setFeedback] = useState(null);      // retour visuel (ajout/suppression compris)
+  const [pomo, setPomo] = useState(null);              // session focus : { label, totalMs, endsAt, paused, remainingMs }
   const [calMonth, setCalMonth] = useState(() => {     // mois affiché dans l'agenda
     const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d;
   });
@@ -125,10 +155,12 @@ export default function Productivity({ onSend }) {
   const inputRef = useRef(null);
   const audioCtxRef = useRef(null);
   const remindersRef = useRef(items.reminders);
+  const pomoRef = useRef(null);
 
   const feature = FEATURES.find((f) => f.id === active) ?? FEATURES[0];
 
   useEffect(() => { remindersRef.current = items.reminders; }, [items.reminders]);
+  useEffect(() => { pomoRef.current = pomo; }, [pomo]);
   useEffect(() => { inputRef.current?.focus(); }, [active]);
 
   // ----- Persistance en base (chargement au démarrage) -----
@@ -240,9 +272,66 @@ export default function Productivity({ onSend }) {
           ),
         }));
       }
+      // Fin de session focus
+      const p = pomoRef.current;
+      if (p && !p.paused && t >= p.endsAt) {
+        playAlarm(`Focus terminé : ${p.label}`);
+        recordSession(p, 'done');
+        setPomo(null);
+      }
     }, 1000);
     return () => clearInterval(id);
   }, []);
+
+  // ----- Mode Focus (Pomodoro) -----
+  const startPomodoro = (text) => {
+    unlockAudio();
+    if (Notification?.permission === 'default') Notification.requestPermission();
+    const min = Math.max(1, parseDuration(text));
+    const totalMs = min * 60000;
+    const label = cleanFocusLabel(text) || 'Focus';
+    setPomo({ label, minutes: min, totalMs, startedAt: Date.now(), endsAt: Date.now() + totalMs, paused: false, remainingMs: totalMs });
+    return `${label} — ${min} min`;
+  };
+
+  const togglePomo = () =>
+    setPomo((p) => {
+      if (!p) return p;
+      return p.paused
+        ? { ...p, paused: false, endsAt: Date.now() + p.remainingMs }
+        : { ...p, paused: true, remainingMs: Math.max(0, p.endsAt - Date.now()) };
+    });
+
+  // Enregistre une session terminée dans l'historique (persisté).
+  const recordSession = (p, status) => {
+    if (!p) return;
+    const elapsedMs = status === 'done'
+      ? p.totalMs
+      : Math.max(0, p.totalMs - (p.paused ? p.remainingMs : p.endsAt - Date.now()));
+    const trackedMin = Math.max(0, Math.round(elapsedMs / 60000));
+    const session = {
+      id: crypto?.randomUUID?.() ?? String(Date.now()),
+      label: p.label,
+      minutes: p.minutes,
+      trackedMin,
+      status, // 'done' | 'stopped'
+      createdAt: new Date(p.startedAt).toISOString(),
+      endedAt: new Date().toISOString(),
+    };
+    setItems((prev) => ({ ...prev, pomodoro: [...prev.pomodoro, session] }));
+  };
+
+  const finishPomodoro = () => {
+    const p = pomoRef.current;
+    recordSession(p, 'done');
+    setPomo(null);
+  };
+
+  const stopPomodoro = () => {
+    const p = pomoRef.current;
+    recordSession(p, 'stopped');
+    setPomo(null);
+  };
 
   // Ajoute un élément dans la bonne liste (gère agenda/rappels + récurrence).
   const addToTarget = (target, text) => {
@@ -347,7 +436,15 @@ export default function Productivity({ onSend }) {
     const target = intent?.target && validTarget(intent.target) ? intent.target : active;
     const tLabel = FEATURES.find((f) => f.id === target)?.label.toLowerCase() ?? target;
 
-    if (action === 'delete' || action === 'complete') {
+    if (target === 'pomodoro') {
+      if (action === 'delete' || action === 'complete') {
+        stopPomodoro();
+        setFeedback({ kind: 'del', msg: '⏹ Session focus arrêtée' });
+      } else {
+        const label = startPomodoro(intent?.content || text);
+        setFeedback({ kind: 'add', msg: `🍅 Focus lancé : ${label}` });
+      }
+    } else if (action === 'delete' || action === 'complete') {
       const removed = deleteFromTarget(target, intent?.query || text);
       setFeedback(removed
         ? { kind: 'del', msg: `🗑 « ${removed} » supprimé de ${tLabel}` }
@@ -417,6 +514,24 @@ export default function Productivity({ onSend }) {
   const headerCount = active === 'reminders' ? reminderItems.length
     : active === 'agenda' ? items.agenda.length
     : genericItems.length;
+
+  // ----- Mode Focus : valeurs d'affichage -----
+  const POMO_C = 2 * Math.PI * 45; // circonférence de l'anneau SVG
+  const pomoRemaining = pomo ? Math.max(0, pomo.paused ? pomo.remainingMs : pomo.endsAt - now) : 0;
+  const pomoElapsedFrac = pomo && pomo.totalMs ? 1 - pomoRemaining / pomo.totalMs : 0;
+  const fmtClock = (ms) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  };
+
+  // Statistiques des sessions focus
+  const pomoSessions = items.pomodoro || [];
+  const pomoStats = {
+    total: pomoSessions.length + (pomo ? 1 : 0),
+    active: pomo ? 1 : 0,
+    done: pomoSessions.filter((s) => s.status === 'done').length,
+    tracked: pomoSessions.reduce((sum, s) => sum + (s.trackedMin || 0), 0),
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -542,7 +657,8 @@ export default function Productivity({ onSend }) {
               ) : (
                 <table className="w-full border-collapse text-sm">
                   <thead>
-                    <tr className="text-left text-xs uppercase tracking-wider text-gray-500">
+                    <tr className="text-left text-xs uppercase trackje besoin de voire quelque chose comme ca
+                    ing-wider text-gray-500">
                       <th className="px-3 py-2">Rendez-vous</th>
                       <th className="px-3 py-2">Date</th>
                       <th className="px-3 py-2">Heure</th>
@@ -576,7 +692,98 @@ export default function Productivity({ onSend }) {
                   </tbody>
                 </table>
               )
-            /* ---- VUE GÉNÉRIQUE (tâches, pomodoro, projets) ---- */
+            /* ---- VUE FOCUS MODE (Pomodoro) ---- */
+            ) : active === 'pomodoro' ? (
+              <div className="flex h-full flex-col gap-5">
+                {/* Bandeau de stats */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-white/10">Total : {pomoStats.total}</span>
+                  <span className="rounded-full bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-300 ring-1 ring-sky-400/30">Actif : {pomoStats.active}</span>
+                  <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300 ring-1 ring-emerald-400/30">Terminé : {pomoStats.done}</span>
+                  <span className="ml-auto rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300 ring-1 ring-amber-400/30">{pomoStats.tracked} min cumulées</span>
+                </div>
+
+                {/* Zone centrale : anneau + timer */}
+                <div className="flex flex-1 flex-col items-center justify-center gap-8">
+                  {pomo ? (
+                    <>
+                      <div className="relative flex h-64 w-64 items-center justify-center">
+                        <svg className="absolute inset-0 h-full w-full -rotate-90" viewBox="0 0 100 100">
+                          <defs>
+                            <linearGradient id="pomoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#22d3ee" />
+                              <stop offset="100%" stopColor="#6366f1" />
+                            </linearGradient>
+                          </defs>
+                          <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="6" />
+                          <circle
+                            cx="50" cy="50" r="45" fill="none" stroke="url(#pomoGrad)" strokeWidth="6" strokeLinecap="round"
+                            strokeDasharray={POMO_C}
+                            strokeDashoffset={pomoElapsedFrac * POMO_C}
+                            style={ { transition: 'stroke-dashoffset 1s linear', filter: 'drop-shadow(0 0 6px rgba(99,102,241,0.5))' } }
+                          />
+                        </svg>
+                        <div className="text-center">
+                          <div className="text-6xl font-bold tabular-nums tracking-tight text-white">{fmtClock(pomoRemaining)}</div>
+                          <div className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
+                            {pomo.paused ? '⏸ En pause' : '● En cours'} — {pomo.minutes}M
+                          </div>
+                          {pomo.label && pomo.label !== 'Focus' && (
+                            <div className="mt-1 max-w-[200px] truncate text-sm text-gray-500">{pomo.label}</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={togglePomo} className="rounded-xl px-6 py-2.5 text-sm font-medium text-white ring-1 ring-white/15 transition hover:bg-white/5">
+                          {pomo.paused ? '▶ Reprendre' : '⏸ Pause'}
+                        </button>
+                        <button onClick={finishPomodoro} className="rounded-xl bg-emerald-500/15 px-6 py-2.5 text-sm font-medium text-emerald-300 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/25">
+                          ✓ Terminer
+                        </button>
+                        <button onClick={stopPomodoro} className="rounded-xl bg-red-500/15 px-6 py-2.5 text-sm font-medium text-red-300 ring-1 ring-red-400/30 transition hover:bg-red-500/25">
+                          ⏹ Arrêter
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center">
+                      <div className="text-6xl">🍅</div>
+                      <p className="mx-auto mt-4 max-w-xs text-sm text-gray-400">
+                        Tape « démarrer un focus de 50 min » ci-dessous, ou choisis une durée :
+                      </p>
+                      <div className="mt-5 flex justify-center gap-2">
+                        {[15, 25, 50].map((m) => (
+                          <button key={m} onClick={() => { setFeedback({ kind: 'add', msg: `🍅 Focus lancé : ${startPomodoro(`focus ${m} min`)}` }); }}
+                            className="rounded-xl bg-gradient-to-br from-cyan-500/15 to-indigo-500/15 px-5 py-2.5 text-sm font-medium text-white ring-1 ring-white/15 transition hover:from-cyan-500/25 hover:to-indigo-500/25">
+                            {m} min
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Historique des sessions */}
+                {pomoSessions.length > 0 && (
+                  <div className="shrink-0">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Sessions récentes</p>
+                      <button onClick={() => setItems((prev) => ({ ...prev, pomodoro: [] }))} className="text-xs text-gray-600 hover:text-red-400">Tout effacer</button>
+                    </div>
+                    <div className="flex max-h-32 flex-col gap-1 overflow-auto">
+                      {[...pomoSessions].reverse().slice(0, 20).map((s) => (
+                        <div key={s.id} className="flex items-center gap-3 rounded-lg bg-surface-900/40 px-3 py-1.5 text-xs ring-1 ring-white/5">
+                          <span className={s.status === 'done' ? 'text-emerald-400' : 'text-gray-500'}>{s.status === 'done' ? '✓' : '⏹'}</span>
+                          <span className="flex-1 truncate text-gray-300">{s.label}</span>
+                          <span className="text-gray-500">{s.trackedMin}/{s.minutes} min</span>
+                          <span className="text-gray-600">{fmtDay(s.endedAt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            /* ---- VUE GÉNÉRIQUE (tâches, projets) ---- */
             ) : (
               genericItems.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-sm text-gray-600">Aucun élément pour le moment.</div>
