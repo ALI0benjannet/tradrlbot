@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Dashboard from './components/Dashboard.jsx';
 import History from './components/History.jsx';
 import Settings from './components/Settings.jsx';
+import Productivity from './components/Productivity.jsx';
 import { connectRealtime, sendCommand } from './lib/api.js';
 
 // Catégories de la barre latérale (regroupées par section).
@@ -221,7 +222,9 @@ export default function App() {
             transition={{ duration: 0.2 }}
             className="h-full"
           >
-            {(tab === 'dashboard' || CATEGORIES[tab]) && (
+            {tab === 'productivity' && <Productivity onSend={handleSend} />}
+            {(tab === 'dashboard' ||
+              (CATEGORIES[tab] && tab !== 'productivity')) && (
               <Dashboard
                 status={status}
                 assistantState={assistantState}

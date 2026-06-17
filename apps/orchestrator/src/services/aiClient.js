@@ -22,6 +22,17 @@ export async function analyzeText(text) {
   return res.json(); // analyse complète
 }
 
+// Compréhension d'intention productivité (ajouter / supprimer / terminer…).
+export async function classifyProductivityIntent(text, active = null) {
+  const res = await fetch(`${AI_URL}/api/productivity/intent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, active }),
+  });
+  if (!res.ok) throw new Error(`AI service ${res.status}`);
+  return res.json(); // { action, target, content, query, engine }
+}
+
 export async function transcribe(audioBase64) {
   const res = await fetch(`${AI_URL}/api/stt`, {
     method: 'POST',

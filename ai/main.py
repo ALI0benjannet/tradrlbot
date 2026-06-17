@@ -16,6 +16,8 @@ from app.schemas import (
     TTSResponse,
     AnalyzeRequest,
     AnalyzeResponse,
+    ActionIntentRequest,
+    ActionIntentResponse,
 )
 from app.stt import transcribe
 from app.nlu import detect_intent
@@ -23,6 +25,7 @@ from app.tts import synthesize
 from app.memory import remember, recall
 from app.sentiment import analyze_sentiment
 from app import nlp_pipeline
+from app.intent_action import classify_action
 from app.config import get_settings
 
 app = FastAPI(title="Tradrly AI Layer", version="0.2.0")
@@ -87,6 +90,13 @@ def analyze(req: AnalyzeRequest):
 @app.post("/productivity/analyze", response_model=AnalyzeResponse)
 def productivity_analyze(req: AnalyzeRequest):
     return AnalyzeResponse(**nlp_pipeline.analyze(req.text))
+
+
+# Compréhension d'intention productivité : ajouter / supprimer / terminer un
+# élément (rdv, tâche, rappel, agenda…) — Gemini → OpenAI → repli local.
+@app.post("/api/productivity/intent", response_model=ActionIntentResponse)
+def productivity_intent(req: ActionIntentRequest):
+    return ActionIntentResponse(**classify_action(req.text, req.active))
 
 
 @app.post("/api/tts", response_model=TTSResponse)

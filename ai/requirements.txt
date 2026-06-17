@@ -6,6 +6,9 @@ python-dotenv==1.0.1
 openai==1.51.0
 chromadb==0.5.5
 
+# --- Compréhension d'intention (gratuite via Gemini) ---
+google-generativeai==0.8.3  # API Gemini (clé gratuite : aistudio.google.com/apikey)
+
 # --- Couche NLP locale (compréhension hors-ligne, remplace le LLM) ---
 # TextBlob + NLTK sont en Python pur : ils s'installent partout sans compilateur.
 textblob==0.18.0.post0  # sentiment (polarity + subjectivity)

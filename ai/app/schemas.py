@@ -34,6 +34,19 @@ class AnalyzeResponse(BaseModel):
     engine: str
 
 
+class ActionIntentRequest(BaseModel):
+    text: str
+    active: str | None = None  # contexte (onglet actif : tasks, reminders, agenda…)
+
+
+class ActionIntentResponse(BaseModel):
+    action: str   # add | delete | complete | list | unknown
+    target: str | None
+    content: str
+    query: str
+    engine: str
+
+
 class STTRequest(BaseModel):
     audio: str  # audio encodé en base64
 

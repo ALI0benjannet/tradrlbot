@@ -51,6 +51,35 @@ export async function saveSettings(settings) {
   return res.json();
 }
 
+// Persistance de la productivité (tâches, rappels, agenda…).
+export async function fetchProductivity() {
+  const res = await fetch(`${ORCH_HTTP}/api/productivity`);
+  if (!res.ok) throw new Error(`Orchestrateur: ${res.status}`);
+  return res.json();
+}
+
+export async function saveProductivity(items) {
+  const res = await fetch(`${ORCH_HTTP}/api/productivity`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(items),
+  });
+  if (!res.ok) throw new Error(`Orchestrateur: ${res.status}`);
+  return res.json();
+}
+
+// Compréhension d'intention : ajouter / supprimer / terminer un élément.
+// Renvoie { action, target, content, query, engine }.
+export async function classifyIntent(text, active = null) {
+  const res = await fetch(`${ORCH_HTTP}/api/productivity/intent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, active }),
+  });
+  if (!res.ok) throw new Error(`Orchestrateur: ${res.status}`);
+  return res.json();
+}
+
 // Connexion temps réel : statut de l'assistant, événements, transcriptions.
 export function connectRealtime({ onMessage, onStatus } = {}) {
   let ws;

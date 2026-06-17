@@ -7,9 +7,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { routeCommand } from './router/commandRouter.js';
-import { analyzeText } from './services/aiClient.js';
-import { getHistory } from './data/db.js';
-import { getSettings, saveSettings } from './data/settings.js';
+import { analyzeText, classifyProductivityIntent } from './services/aiClient.js';
+import { getHistory, getState, setState } from './data/db.js';import { getSettings, saveSettings } from './data/settings.js';
 import { getService, listServices } from '../../../services/index.js';
 import { runDesktopAction, listDesktopActions } from './desktop/index.js';
 
@@ -73,6 +72,27 @@ app.post('/api/analyze', async (req, res) => {
 
 app.get('/api/history', (_req, res) => {
   res.json(getHistory());
+});
+
+// ---- Persistance de la productivité (tâches, rappels, agenda…) ----
+app.get('/api/productivity', (_req, res) => {
+  res.json(getState('productivity', {}));
+});
+
+app.put('/api/productivity', (req, res) => {
+  res.json(setState('productivity', req.body ?? {}));
+});
+
+// Compréhension d'intention productivité (ajouter / supprimer…) — relais vers FastAPI.
+app.post('/api/productivity/intent', async (req, res) => {
+  const { text, active } = req.body ?? {};
+  if (!text) return res.status(400).json({ error: 'text requis' });
+  try {
+    const result = await classifyProductivityIntent(text, active ?? null);
+    res.json(result);
+  } catch (err) {
+    res.status(503).json({ error: 'Couche IA indisponible', detail: String(err) });
+  }
 });
 
 app.get('/api/settings', (_req, res) => res.json(getSettings()));
