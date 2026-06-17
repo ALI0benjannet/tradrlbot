@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <radialGradient id="body" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#f4f6fb"/>
+      <stop offset="100%" stop-color="#d8dce8"/>
+    </radialGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1b2030"/>
+      <stop offset="100%" stop-color="#0b0f1a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Oreilles -->
+  <path d="M55 55 L45 20 L82 42 Z" fill="url(#body)"/>
+  <path d="M145 55 L155 20 L118 42 Z" fill="url(#body)"/>
+  <path d="M58 50 L52 32 L74 44 Z" fill="#f7a8c4"/>
+  <path d="M142 50 L148 32 L126 44 Z" fill="#f7a8c4"/>
+
+  <!-- Tête / corps -->
+  <rect x="40" y="40" width="120" height="120" rx="48" fill="url(#body)"/>
+
+  <!-- Visage écran -->
+  <rect x="62" y="62" width="76" height="58" rx="26" fill="url(#face)"/>
+
+  <!-- Yeux -->
+  <circle cx="86" cy="90" r="9" fill="#eaf2ff"/>
+  <circle cx="114" cy="90" r="9" fill="#eaf2ff"/>
+
+  <!-- Joues -->
+  <circle cx="72" cy="104" r="4" fill="#f7a8c4" opacity="0.85"/>
+  <circle cx="128" cy="104" r="4" fill="#f7a8c4" opacity="0.85"/>
+
+  <!-- Coeur ventre -->
+  <path d="M100 132 c-6 -8 -18 -4 -18 5 c0 8 11 14 18 19 c7 -5 18 -11 18 -19 c0 -9 -12 -13 -18 -5 Z" fill="#f7a8c4"/>
+
+  <!-- Clochette -->
+  <circle cx="100" cy="150" r="7" fill="#f5c542" stroke="#d9a400" stroke-width="2"/>
+</svg>

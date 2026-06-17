@@ -1,24 +1,54 @@
 """NLU — détection d'intention (Natural Language Understanding).
 
-Approche hybride : règles rapides par mots-clés, extensible vers un
-classifieur ML. Renvoie une étiquette d'intention normalisée.
+Approche par règles rapides (hors-ligne) renvoyant une intention normalisée,
+une catégorie (pour l'UI) et un score de confiance simple.
 """
 import re
 
+# (intention, catégorie UI, motif regex)
 INTENT_PATTERNS = [
-    ("system.control", r"\b(volume|son|luminosit|ouvre|lance|ferme|éteins)\b"),
-    ("calendar.query", r"\b(rendez-vous|agenda|calendrier|réunion|planning)\b"),
-    ("email.action", r"\b(mail|email|courriel|gmail|envoie un message)\b"),
-    ("messaging.send", r"\b(slack|teams|discord|message à)\b"),
-    ("notes.action", r"\b(note|notion|rappel|todo|tâche)\b"),
-    ("code.assist", r"\b(git|commit|code|bug|fonction|repo)\b"),
-    ("smalltalk", r"\b(bonjour|salut|merci|comment vas-tu|ça va)\b"),
+    ("system.control", "desktop", r"\b(volume|son|luminosit|ouvre|lance|ferme|éteins|verrouille|fenêtre)\b"),
+    ("calendar.query", "calendar", r"\b(rendez-vous|agenda|calendrier|réunion|planning|réserve)\b"),
+    ("email.action", "communication", r"\b(mail|email|courriel|gmail|envoie un message)\b"),
+    ("messaging.send", "communication", r"\b(slack|teams|discord|message à)\b"),
+    ("notes.action", "tasks", r"\b(note|notion|rappel|todo|tâche|tache)\b"),
+    ("code.assist", "developer", r"\b(git|commit|code|bug|fonction|repo|déploie)\b"),
+    ("smalltalk", "companion", r"\b(bonjour|salut|merci|comment vas-tu|ça va|blague)\b"),
 ]
+
+# Couleur de badge par catégorie (cohérent avec l'UI).
+CATEGORY_COLORS = {
+    "desktop": "#3b82f6",
+    "calendar": "#a855f7",
+    "communication": "#06b6d4",
+    "tasks": "#22d3ee",
+    "developer": "#22c55e",
+    "companion": "#ec4899",
+    "general": "#6b7280",
+}
 
 
 def detect_intent(text: str) -> str:
+    """Compat ascendante : renvoie l'étiquette d'intention seule."""
+    return classify(text)["intent"]
+
+
+def classify(text: str) -> dict:
+    """Détection enrichie : intention + catégorie + couleur + confiance."""
     lowered = text.lower()
-    for intent, pattern in INTENT_PATTERNS:
-        if re.search(pattern, lowered):
-            return intent
-    return "general.query"
+    for intent, category, pattern in INTENT_PATTERNS:
+        matches = re.findall(pattern, lowered)
+        if matches:
+            confidence = min(1.0, 0.6 + 0.2 * len(matches))
+            return {
+                "intent": intent,
+                "category": category,
+                "color": CATEGORY_COLORS[category],
+                "confidence": round(confidence, 2),
+            }
+    return {
+        "intent": "general.query",
+        "category": "general",
+        "color": CATEGORY_COLORS["general"],
+        "confidence": 0.3,
+    }

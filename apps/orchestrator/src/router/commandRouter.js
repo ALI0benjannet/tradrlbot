@@ -8,22 +8,22 @@ import { recordInteraction } from '../data/db.js';
 
 // Chaque règle : un test regex (sur texte normalisé sans accents) -> { action, params }
 const DESKTOP_RULES = [
-  // Volume
-  { re: /(monte|augmente|hausse).*(volume|son)/i, map: () => ({ action: 'volume.up' }) },
-  { re: /(baisse|diminue|reduis).*(volume|son)/i, map: () => ({ action: 'volume.down' }) },
-  { re: /(coupe|mute|silence).*(son|volume)/i, map: () => ({ action: 'volume.mute' }) },
+  // Volume — réglage à une valeur précise (prioritaire : présence d'un nombre)
   {
-    re: /(?:regle|mets?).*(?:volume|son).*?(\d{1,3})\s*%?/i,
+    re: /(?:regl\w*|met\w*|fix\w*|mont\w*|augment\w*|augmant\w*|augmat\w*|baiss\w*|diminu\w*|pass\w*|set).*(?:volume|son|sound).*?(\d{1,3})\s*%?/i,
     map: (m) => ({ action: 'volume.set', params: { level: m[1] } }),
   },
+  { re: /(?:monte|augmente|augmant|augmat|hausse|plus de|up).*(volume|son|sound)/i, map: () => ({ action: 'volume.up' }) },
+  { re: /(?:baisse|diminue|reduis|moins de|down).*(volume|son|sound)/i, map: () => ({ action: 'volume.down' }) },
+  { re: /(?:coupe|mute|silence|muet).*(son|volume|sound)/i, map: () => ({ action: 'volume.mute' }) },
 
-  // Luminosité
-  { re: /(monte|augmente).*(luminosit|brillance|ecran)/i, map: () => ({ action: 'brightness.up' }) },
-  { re: /(baisse|diminue).*(luminosit|brillance|ecran)/i, map: () => ({ action: 'brightness.down' }) },
+  // Luminosité — réglage à une valeur précise (tolère "lumiere", "lumenisite", etc.)
   {
-    re: /(?:regle|mets?).*(?:luminosit|brillance).*?(\d{1,3})\s*%?/i,
+    re: /(?:regl\w*|met\w*|fix\w*|mont\w*|augment\w*|augmant\w*|augmat\w*|baiss\w*|diminu\w*|pass\w*|set).*(?:luminosit|luminisit|lumenisit|lumin|lumier|lumiere|brillance|brightness|ecran|screen).*?(\d{1,3})\s*%?/i,
     map: (m) => ({ action: 'brightness.set', params: { level: m[1] } }),
   },
+  { re: /(?:monte|augmente|augmant|augmat|hausse|plus de|up).*(luminosit|luminisit|lumenisit|lumin|lumier|lumiere|brillance|brightness|ecran|screen)/i, map: () => ({ action: 'brightness.up' }) },
+  { re: /(?:baisse|diminue|reduis|moins de|down).*(luminosit|luminisit|lumenisit|lumin|lumier|lumiere|brillance|brightness|ecran|screen)/i, map: () => ({ action: 'brightness.down' }) },
 
   // Fenêtres
   { re: /(quelle|quel).*(fenetre|application).*(active|ouverte|premier plan)/i, map: () => ({ action: 'window.active' }) },
@@ -42,7 +42,12 @@ const DESKTOP_RULES = [
     map: (m, text) => ({ action: 'files.mkdir', params: { path: parseFolderPath(text) } }),
   },
   {
-    re: /(?:liste|montre|affiche|contenu).*(dossier|repertoire|fichiers).*(bureau|desktop|documents|telechargements|downloads)/i,
+    re: /(?:liste|montre|affiche|contenu).*(?:dossier|repertoire|fichiers|contenu).*(?:bureau|desktop|documents|telechargements|downloads)/i,
+    map: (m, text) => ({ action: 'files.list', params: { path: parseLocation(text) } }),
+  },
+  // Variante courte : "liste le bureau", "montre le contenu du bureau"
+  {
+    re: /(?:liste|montre|affiche|ouvre).*(?:bureau|desktop|documents|telechargements|downloads)/i,
     map: (m, text) => ({ action: 'files.list', params: { path: parseLocation(text) } }),
   },
   // Renommer : "renomme X en Y" (tolère fautes : renome, ave/avec, etc.)
@@ -83,11 +88,11 @@ const DESKTOP_RULES = [
 
   // Applications (testées en dernier car très permissives)
   {
-    re: /(?:ferme|quitte)\s+(?:l'?app(?:lication)?\s+)?(.+)/i,
+    re: /(?:ferme[rz]?|quitte[rz]?|close|kill)\s+(?:l'?app(?:lication)?\s+)?(.+)/i,
     map: (m) => ({ action: 'app.close', params: { name: m[1].trim() } }),
   },
   {
-    re: /(?:ouvre|lance|demarre)\s+(?:l'?app(?:lication)?\s+)?(.+)/i,
+    re: /(?:ouvr\w*|lanc\w*|demarr\w*|execute[rz]?|open|start|launch|run)\s+(?:l'?app(?:lication)?\s+)?(.+)/i,
     map: (m) => ({ action: 'app.open', params: { name: m[1].trim() } }),
   },
 ];

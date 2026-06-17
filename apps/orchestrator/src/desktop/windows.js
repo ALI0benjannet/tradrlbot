@@ -1,4 +1,4 @@
-import { optionalImport, ok, fail } from './platform.js';
+import { optionalImport, safeExec, isWin, ok, fail } from './platform.js';
 
 // Gestion des fenêtres : liste, fenêtre active, focus, minimiser/maximiser.
 // Librairies : `node-window-manager` (manipulation) + `active-win` (fenêtre active).
@@ -27,12 +27,32 @@ export async function getActiveWindow() {
 // Liste les fenêtres ouvertes (titre + application).
 export async function listWindows() {
   const wm = await getWM();
-  if (!wm) return fail('Installez `node-window-manager`.');
-  const windows = wm
-    .getWindows()
-    .filter((w) => w.isVisible() && w.getTitle())
-    .map((w) => ({ id: w.id, title: w.getTitle(), path: w.path }));
-  return ok(`${windows.length} fenêtre(s) ouverte(s).`, windows);
+  if (wm) {
+    const windows = wm
+      .getWindows()
+      .filter((w) => w.isVisible() && w.getTitle())
+      .map((w) => ({ id: w.id, title: w.getTitle(), path: w.path }));
+    return ok(`${windows.length} fenêtre(s) ouverte(s).`, windows);
+  }
+
+  // Repli Windows sans module natif : PowerShell + Get-Process.
+  if (isWin) {
+    const cmd =
+      'powershell -NoProfile -Command "Get-Process | Where-Object { $_.MainWindowTitle } | ' +
+      'Select-Object -ExpandProperty MainWindowTitle"';
+    const res = await safeExec(cmd);
+    if (res.ok) {
+      const titles = res.stdout
+        .split(/\r?\n/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+      return ok(
+        `${titles.length} fenêtre(s) ouverte(s).`,
+        titles.map((title) => ({ title }))
+      );
+    }
+  }
+  return fail('Installez `node-window-manager`.');
 }
 
 // Met au premier plan la première fenêtre dont le titre correspond.

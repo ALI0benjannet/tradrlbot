@@ -5,7 +5,15 @@ pydantic-settings==2.5.2
 python-dotenv==1.0.1
 openai==1.51.0
 chromadb==0.5.5
+
+# --- Couche NLP locale (compréhension hors-ligne, remplace le LLM) ---
+# TextBlob + NLTK sont en Python pur : ils s'installent partout sans compilateur.
+textblob==0.18.0.post0  # sentiment (polarity + subjectivity)
+nltk==3.9.1             # tokenisation / corpora pour TextBlob
+
+# spaCy (NER complet) est OPTIONNEL et lourd à compiler. Il est installé
+# séparément via :  pip install -r ai/requirements-nlp.txt
+# Sans lui, l'extraction d'entités bascule automatiquement sur des règles regex.
+
 # STT/TTS locaux optionnels :
 # faster-whisper==1.0.3
-# Analyse de sentiment légère (option) :
-# vaderSentiment==3.3.2

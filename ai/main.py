@@ -1,8 +1,9 @@
-"""Couche IA — API FastAPI.
-
+"""
+Couche IA — API FastAPI.
 Expose STT, NLU, LLM, TTS, mémoire vectorielle et analyse de sentiment
 à la couche Orchestration (Node.js) via HTTP localhost.
 """
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,15 +14,18 @@ from app.schemas import (
     STTResponse,
     TTSRequest,
     TTSResponse,
+    AnalyzeRequest,
+    AnalyzeResponse,
 )
 from app.stt import transcribe
 from app.nlu import detect_intent
-from app.llm import generate_reply
 from app.tts import synthesize
 from app.memory import remember, recall
 from app.sentiment import analyze_sentiment
+from app import nlp_pipeline
+from app.config import get_settings
 
-app = FastAPI(title="Tradrly AI Layer", version="0.1.0")
+app = FastAPI(title="Tradrly AI Layer", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,15 +50,43 @@ def stt(req: STTRequest):
 def chat(req: ChatRequest):
     # 1) NLU : détection d'intention
     intent = detect_intent(req.text)
-    # 2) Sentiment
+
+    # 2) Sentiment (étiquette simple, compat ascendante)
     sentiment = analyze_sentiment(req.text)
-    # 3) Mémoire : contexte pertinent
+
+    # 3) ── Assistant développeur SANS LLM ──
+    if intent == "code.assist":
+        from app.code_assist import assister
+        reply = assister(req.text)
+        remember(req.text, reply)
+        return ChatResponse(intent=intent, response=reply, sentiment=sentiment)
+
+    # 4) Mémoire : contexte pertinent
     context = recall(req.text)
-    # 4) LLM : génération de la réponse
-    reply = generate_reply(req.text, context=context, intent=intent)
-    # 5) Mémoire : on enregistre l'échange
+
+    # 5) Compréhension : NLP local par défaut, LLM seulement si activé + clé
+    settings = get_settings()
+    if settings.use_llm and settings.openai_api_key:
+        from app.llm import generate_reply as llm_reply
+        reply = llm_reply(req.text, context=context, intent=intent)
+    else:
+        reply = nlp_pipeline.generate_reply(req.text, context=context, intent=intent)
+
+    # 6) Mémoire : on enregistre l'échange
     remember(req.text, reply)
     return ChatResponse(intent=intent, response=reply, sentiment=sentiment)
+
+
+@app.post("/api/analyze", response_model=AnalyzeResponse)
+def analyze(req: AnalyzeRequest):
+    """Analyse NLP complète : entités, priorité, sentiment, assignation."""
+    return AnalyzeResponse(**nlp_pipeline.analyze(req.text))
+
+
+# Alias pour le module productivité (UI / orchestrateur).
+@app.post("/productivity/analyze", response_model=AnalyzeResponse)
+def productivity_analyze(req: AnalyzeRequest):
+    return AnalyzeResponse(**nlp_pipeline.analyze(req.text))
 
 
 @app.post("/api/tts", response_model=TTSResponse)

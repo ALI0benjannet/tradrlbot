@@ -1,0 +1,202 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{parskip}
+
+\geometry{margin=2.5cm}
+
+% Couleurs
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{primary}{RGB}{79,70,229}
+
+% Style des titres
+\titleformat{\section}{\Large\bfseries\color{primary}}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\large\bfseries}{}{0em}{}
+
+% Style des blocs de code
+\lstset{
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  keepspaces=true,
+  columns=flexible,
+}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=primary,
+  urlcolor=primary,
+}
+
+% ─────────────────────────────────────────────
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{3cm}
+  {\Huge\bfseries\color{primary} Rapport — Tradrly Bot\par}
+  \vspace{1cm}
+  {\large Assistant IA local, multi-couches, à exécution majoritairement hors-ligne\par}
+  \vspace{2cm}
+  {\large\today\par}
+\end{titlepage}
+
+% ─────────────────────────────────────────────
+\section{Ce que fait le projet}
+
+Tradrly Bot est un \textbf{assistant IA local} contrôlable par voix ou texte,
+qui tourne entièrement sur la machine de l'utilisateur (\emph{offline-first}).
+Il comprend les commandes en français et en anglais (y compris avec fautes de frappe)
+et agit directement sur le PC : ouvrir des applications, régler le volume,
+contrôler la luminosité, gérer des fichiers, etc.
+
+% ─────────────────────────────────────────────
+\section{Architecture en couches}
+
+\begin{lstlisting}
+UI (Electron + React)
+       | WebSocket / HTTP
+Orchestrateur (Node.js :4000)   <- routeur de commandes
+       | HTTP
+Couche IA (Python FastAPI :8000) <- NLU / NLP local / STT / TTS
+       |
+Services externes (Slack, Gmail, Notion...)
+\end{lstlisting}
+
+\subsection*{Description des couches}
+
+\begin{itemize}
+  \item \textbf{UI} : interface Electron + React, affiche l'avatar animé, l'historique et les réglages. Communique avec l'orchestrateur via WebSocket.
+  \item \textbf{Orchestrateur} : cœur Node.js. Reçoit les commandes, applique les règles locales (regex) et délègue à la couche IA si nécessaire.
+  \item \textbf{Couche IA} : serveur Python FastAPI. Gère la transcription vocale (STT), la compréhension (NLU + NLP local via spaCy/TextBlob), la génération de réponse, la synthèse vocale (TTS) et la mémoire vectorielle.
+  \item \textbf{Services} : intégrations avec des applications tierces (Slack, Teams, Discord, Notion, Gmail, Git, Calendar).
+\end{itemize}
+
+% ─────────────────────────────────────────────
+\section{APIs et bibliothèques utilisées}
+
+\begin{longtable}{>{\bfseries}p{4.5cm} p{2.5cm} p{7.5cm}}
+\toprule
+Bibliothèque / API & Couche & À quoi ça sert \\
+\midrule
+\endhead
+
+Express & Orchestrateur & Serveur HTTP REST (\texttt{/api/command}, \texttt{/api/desktop}, \texttt{/api/history}…) \\
+\addlinespace
+ws (WebSocket) & Orchestrateur & Canal temps-réel entre l'UI et l'orchestrateur (état de l'avatar, réponses) \\
+\addlinespace
+node:sqlite (intégré Node ≥22) & Orchestrateur & Persistance de l'historique des commandes en local, sans dépendance native \\
+\addlinespace
+dotenv & Orchestrateur & Lecture du fichier \texttt{.env} (ports, clés API) \\
+\addlinespace
+cors & Orchestrateur & Autorise les requêtes cross-origin de l'UI Electron/Vite \\
+\addlinespace
+loudness & Orchestrateur & Contrôle du volume système (monter, baisser, régler à X\%) \\
+\addlinespace
+brightness & Orchestrateur & Contrôle de la luminosité de l'écran \\
+\addlinespace
+node-window-manager & Orchestrateur & Liste/focus/minimize/maximize les fenêtres Windows (optionnel, natif) \\
+\addlinespace
+active-win & Orchestrateur & Récupère la fenêtre active courante \\
+\addlinespace
+@nut-tree-fork/nut-js & Orchestrateur & Simulation clavier/souris (taper du texte, bouger la souris, cliquer) \\
+\addlinespace
+child\_process (Node intégré) & Orchestrateur & Lance/ferme des applications système (\texttt{start}, \texttt{taskkill}, \texttt{calc}, \texttt{chrome}…) \\
+\addlinespace
+node:fs (Node intégré) & Orchestrateur & Opérations fichiers (créer dossier, lire, écrire, déplacer, supprimer) \\
+\addlinespace
+FastAPI & IA (Python) & Serveur HTTP Python exposant les endpoints IA (\texttt{/health}, \texttt{/ask}…) \\
+\addlinespace
+OpenAI GPT-4o & IA (Python) & LLM : repli \emph{optionnel} (activé via \texttt{USE\_LLM=true}) pour les intentions très complexes \\
+\addlinespace
+spaCy & IA (Python) & NLP local : NER, POS tagging, dependency parsing, priorité, participants \\
+\addlinespace
+TextBlob & IA (Python) & Analyse de sentiment locale (polarity + subjectivity) \\
+\addlinespace
+ChromaDB & IA (Python) & Base de données vectorielle = mémoire long-terme de l'assistant \\
+\addlinespace
+Whisper (STT) & IA (Python) & Transcription voix → texte (Speech-to-Text, offline) \\
+\addlinespace
+TTS & IA (Python) & Synthèse vocale texte → audio (réponse parlée) \\
+\addlinespace
+Electron & UI & Encapsule l'app React dans une fenêtre desktop native \\
+\addlinespace
+React + Vite & UI & Interface utilisateur (Dashboard, Avatar, Historique, Réglages) \\
+\addlinespace
+TailwindCSS & UI & Styles CSS utilitaires \\
+\addlinespace
+Framer Motion & UI & Animations (avatar LED, transitions) \\
+\addlinespace
+concurrently & Monorepo & Lance les 3 couches en parallèle avec \texttt{npm run dev} \\
+
+\bottomrule
+\end{longtable}
+
+% ─────────────────────────────────────────────
+\section{Modifications apportées}
+
+\begin{longtable}{>{\ttfamily}p{7cm} p{8cm}}
+\toprule
+\normalfont\bfseries Fichier & \bfseries Ce qui a changé \\
+\midrule
+\endhead
+
+apps/orchestrator/src/desktop/apps.js
+  & Table d'alias français/anglais (\texttt{chrome}, \texttt{calculatrice}, \texttt{google}…) → résolution vers le bon exécutable + nettoyage des articles (« la », « le »…) + repli si \texttt{start} échoue. \\
+\addlinespace
+apps/orchestrator/src/router/commandRouter.js
+  & Regex plus larges : accepte l'anglais (\texttt{open}, \texttt{start}, \texttt{launch}) + fautes de frappe (\texttt{ouvrire}, \texttt{augmanter}, \texttt{lumenisite}…) + \texttt{volume.set} / \texttt{brightness.set} déclenchés dès qu'un nombre est présent. \\
+\addlinespace
+apps/orchestrator/src/index.js
+  & Gestion claire du port occupé (\texttt{EADDRINUSE}) + handlers globaux pour éviter le crash/déconnexion automatique sur erreur ponctuelle. \\
+
+\bottomrule
+\end{longtable}
+
+% ─────────────────────────────────────────────
+\section{Flux d'une commande}
+
+\subsection*{Commande locale (offline)}
+
+\begin{lstlisting}
+Utilisateur tape : "ouvre chrome"
+  -> Orchestrateur : regex match -> app.open { name: "chrome" }
+  -> resolveApp("chrome") -> "chrome" (alias Win)
+  -> safeExec('start "" "chrome"') -> Chrome s'ouvre
+  -> Reponse : "Ouverture de chrome."
+\end{lstlisting}
+
+\subsection*{Commande complexe (NLP local)}
+
+\begin{lstlisting}
+Utilisateur tape : "appelle Alice demain c'est urgent"
+  -> Orchestrateur -> POST http://localhost:8000/api/analyze
+  -> Pipeline NLP : NLU + spaCy + TextBlob
+  -> intention + entites (Alice) + priorite (5) + echeance (demain)
+  -> reponse generee localement (sans LLM)
+  -> UI : badge d'intention + reponse
+\end{lstlisting}
+
+% ─────────────────────────────────────────────
+\section{En résumé}
+
+\textbf{La compréhension du langage est désormais 100\% locale (NLP).}
+Le pipeline spaCy + TextBlob analyse l'intention, les entités, la priorité
+et le sentiment sans appel réseau ni clé API. Le contrôle du bureau (volume,
+luminosité, applications, fichiers) reste \textbf{100\% offline} via
+l'orchestrateur Node.js. GPT-4o n'est plus qu'un \textbf{repli optionnel}.
+
+\end{document}

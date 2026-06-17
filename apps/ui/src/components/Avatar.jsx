@@ -38,24 +38,27 @@ export default function Avatar({ state = 'idle' }) {
             />
           ))}
 
-        {/* Noyau de l'avatar */}
+        {/* Noyau de l'avatar : image du compagnon */}
         <motion.div
-          className="relative flex h-32 w-32 items-center justify-center rounded-full"
+          className="relative flex h-32 w-32 items-center justify-center overflow-hidden rounded-full"
           style={{
-            background: `radial-gradient(circle at 35% 30%, ${color}, #0b0f1a 75%)`,
+            background: `radial-gradient(circle at 35% 30%, ${color}33, #0b0f1a 80%)`,
             boxShadow: `0 0 60px ${color}66`,
+            border: `2px solid ${color}`,
           }}
           animate={{ scale: active ? [1, 1.06, 1] : 1 }}
           transition={{ duration: 1.4, repeat: active ? Infinity : 0 }}
         >
-          <motion.div
-            className="h-20 w-20 rounded-full"
-            style={{ background: `${color}22`, border: `2px solid ${color}` }}
-            animate={{ rotate: state === 'thinking' ? 360 : 0 }}
-            transition={{
-              duration: 2,
-              repeat: state === 'thinking' ? Infinity : 0,
-              ease: 'linear',
+          <img
+            src="/avatar.png"
+            alt="Compagnon Tradrly"
+            className="h-full w-full object-cover"
+            draggable={false}
+            onError={(e) => {
+              // Repli sur l'avatar SVG par défaut si avatar.png est absent.
+              if (!e.currentTarget.src.endsWith('/avatar.png')) {
+                e.currentTarget.src = '/avatar.png';
+              }
             }}
           />
         </motion.div>

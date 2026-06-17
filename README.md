@@ -19,7 +19,8 @@ Assistant IA local, multi-couches, à exécution majoritairement hors-ligne.
                            │ HTTP / WebSocket (localhost)
 ┌──────────────────────────┴──────────────────────────────────┐
 │                   COUCHE IA (Python - FastAPI)             │
-│   • STT  • NLU  • LLM (GPT-4o)  • TTS  • Mémoire  • Sentiment│
+│   • STT  • NLU  • NLP local (spaCy)  • TTS  • Mémoire  • Sentiment│
+│   (LLM GPT-4o = repli optionnel via USE_LLM=true)           │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────┴──────────────────────────────────┐
@@ -40,7 +41,7 @@ tradrly_bot/
 ├── apps/
 │   ├── ui/             # Electron + React + Tailwind + Framer Motion
 │   └── orchestrator/   # Node.js — routeur de commandes + contrôle système
-├── ai/                 # Python FastAPI — STT, NLU, LLM, TTS, mémoire, sentiment
+├── ai/                 # Python FastAPI — STT, NLU, NLP local (spaCy), TTS, mémoire
 ├── services/           # Intégrations Slack, Teams, Discord, Notion, Gmail, Git, Calendar
 ├── data/               # SQLite, ChromaDB, cache, coffre chiffré
 ├── .env.example
@@ -232,9 +233,25 @@ Invoke-RestMethod http://localhost:4000/api/settings
 ## 🔄 Flux d'une commande vocale
 
 ```
-Voix → UI capture → Orchestrateur → IA (STT→NLU→LLM→TTS)
+Voix → UI capture → Orchestrateur → IA (STT→NLU→NLP local→TTS)
      → action système / service → réponse → UI (avatar + audio)
 ```
+
+## 🧠 Couche NLP locale (compréhension hors-ligne)
+
+La compréhension du langage est **100 % locale** : spaCy (NER, POS, priorité,
+participants) + TextBlob (sentiment). Le LLM GPT-4o devient un **repli
+optionnel** (activé via `USE_LLM=true`). Détails dans [ai/README_NLP.md](ai/README_NLP.md).
+
+```powershell
+# Analyse NLP complète d'un énoncé
+Invoke-RestMethod -Method Post http://localhost:8000/api/analyze `
+  -ContentType 'application/json' -Body '{"text":"appelle Alice demain c''est urgent"}'
+```
+
+> TextBlob + NLTK (Python pur) suffisent au démarrage. spaCy (NER avancé) est
+> **optionnel** : `pip install -r ai/requirements-nlp.txt` puis
+> `python ai/setup_nlp.py`. Sans lui, l'extraction bascule sur des règles regex.
 
 ## 🔐 Sécurité
 - Tout fonctionne en `localhost` ; aucun port exposé publiquement.

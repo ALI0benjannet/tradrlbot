@@ -18,6 +18,17 @@ export async function sendCommand(text) {
   return res.json();
 }
 
+// Analyse NLP temps réel d'un texte en cours de frappe (badge d'intention).
+export async function analyzeText(text) {
+  const res = await fetch(`${ORCH_HTTP}/api/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`Orchestrateur: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchHistory() {
   const res = await fetch(`${ORCH_HTTP}/api/history`);
   if (!res.ok) throw new Error(`Orchestrateur: ${res.status}`);

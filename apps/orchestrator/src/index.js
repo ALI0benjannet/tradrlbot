@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { routeCommand } from './router/commandRouter.js';
+import { analyzeText } from './services/aiClient.js';
 import { getHistory } from './data/db.js';
 import { getSettings, saveSettings } from './data/settings.js';
 import { getService, listServices } from '../../../services/index.js';
@@ -58,6 +59,18 @@ app.post('/api/command', async (req, res) => {
   }
 });
 
+// Analyse NLP en temps réel (badge d'intention de l'UI) — relais vers FastAPI.
+app.post('/api/analyze', async (req, res) => {
+  const { text } = req.body ?? {};
+  if (!text) return res.status(400).json({ error: 'text requis' });
+  try {
+    const analysis = await analyzeText(text);
+    res.json(analysis);
+  } catch (err) {
+    res.status(503).json({ error: 'Couche IA indisponible', detail: String(err) });
+  }
+});
+
 app.get('/api/history', (_req, res) => {
   res.json(getHistory());
 });
@@ -91,4 +104,27 @@ app.post('/api/services/:name', async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[orchestrator] en écoute sur http://localhost:${PORT}`);
+});
+
+// Message clair si le port est déjà occupé par une instance précédente.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(
+      `[orchestrator] Le port ${PORT} est déjà utilisé par une autre instance.\n` +
+        `→ Ferme les anciens process Node :  Get-Process node | Stop-Process -Force\n` +
+        `   ou change ORCHESTRATOR_PORT dans le .env.`
+    );
+  } else {
+    console.error('[orchestrator] erreur serveur:', err);
+  }
+  process.exit(1);
+});
+
+// Empêche le crash complet de l'orchestrateur sur une erreur ponctuelle
+// (la couche IA hors-ligne, une commande mal formée, etc.).
+process.on('unhandledRejection', (reason) => {
+  console.error('[orchestrator] promesse rejetée non gérée:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[orchestrator] exception non gérée:', err);
 });

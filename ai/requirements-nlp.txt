@@ -1,0 +1,12 @@
+# --- spaCy (NER complet) — OPTIONNEL ---
+# Active l'extraction d'entités avancée (personnes, organisations, lieux).
+# Sans ce paquet, la couche NLP fonctionne quand même (repli par règles regex).
+#
+# Installation :
+#   pip install -r ai/requirements-nlp.txt
+#   python -m spacy download fr_core_news_md
+#
+# ⚠️ Python 3.13 : utilisez spaCy ≥ 3.8 (wheels précompilés disponibles).
+#    spaCy 3.7.x tente de compiler thinc/blis/numpy depuis les sources et
+#    échoue sans Visual Studio Build Tools.
+spacy>=3.8.2

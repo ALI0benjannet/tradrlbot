@@ -11,6 +11,17 @@ export async function askAI(text) {
   return res.json(); // { intent, response, sentiment }
 }
 
+// Analyse NLP complète (entités, priorité, sentiment, assignation).
+export async function analyzeText(text) {
+  const res = await fetch(`${AI_URL}/api/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`AI service ${res.status}`);
+  return res.json(); // analyse complète
+}
+
 export async function transcribe(audioBase64) {
   const res = await fetch(`${AI_URL}/api/stt`, {
     method: 'POST',
