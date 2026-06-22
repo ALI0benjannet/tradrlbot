@@ -122,6 +122,8 @@ FastAPI & IA (Python) & Serveur HTTP Python exposant les endpoints IA (\texttt{/
 \addlinespace
 OpenAI GPT-4o & IA (Python) & LLM : repli \emph{optionnel} (activé via \texttt{USE\_LLM=true}) pour les intentions très complexes \\
 \addlinespace
+google-generativeai & IA (Python) & API Gemini (gratuite, modèle \texttt{gemini-2.5-flash}) pour la compréhension d'intention (ajouter/supprimer rdv, tâche, focus…) \\
+\addlinespace
 spaCy & IA (Python) & NLP local : NER, POS tagging, dependency parsing, priorité, participants \\
 \addlinespace
 TextBlob & IA (Python) & Analyse de sentiment locale (polarity + subjectivity) \\
@@ -189,6 +191,86 @@ Utilisateur tape : "appelle Alice demain c'est urgent"
   -> reponse generee localement (sans LLM)
   -> UI : badge d'intention + reponse
 \end{lstlisting}
+
+% ─────────────────────────────────────────────
+\section{Productivité — Gestion d'agenda, tâches et focus}
+
+Une couche productivité complète a été ajoutée à l'interface Productivité.jsx :
+
+\subsection*{Persistance des données (SQLite)}
+
+\begin{itemize}
+  \item Table \texttt{app\_state} : stockage clé/valeur générique persistant
+  \item Chargement au démarrage : \texttt{GET /api/productivity}
+  \item Sauvegarde auto (anti-rebond 400ms) : \texttt{PUT /api/productivity}
+  \item Structures persistées : tâches, rappels, agenda, sessions focus, projets
+\end{itemize}
+
+\subsection*{Compréhension d'intention (Gemini → OpenAI → Repli local)}
+
+Nouveau module \texttt{ai/app/intent\_action.py} qui transforme le texte libre en action structurée :
+
+\begin{lstlisting}
+Entrée : "supprime le rdv de demain"
+Sortie : {
+  "action": "delete",
+  "target": "agenda",
+  "content": "",
+  "query": "demain",
+  "engine": "gemini"
+}
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textbf{Moteur prioritaire} : Gemini (gratuit, clé sur \texttt{aistudio.google.com/apikey})
+  \item \textbf{Repli} : OpenAI (si Gemini échoue), puis règles locales par regex
+  \item \textbf{Actions détectées} : \texttt{add}, \texttt{delete}, \texttt{complete}, \texttt{list}, \texttt{unknown}
+  \item \textbf{Cibles} : \texttt{tasks}, \texttt{reminders}, \texttt{agenda}, \texttt{pomodoro}, \texttt{projects}
+  \item \textbf{Tolérance aux fautes} : regex accepte « supprime / efface / arrête / coupe »
+\end{itemize}
+
+Endpoint : \texttt{POST /api/productivity/intent} (FastAPI) → relais par l'orchestrateur
+
+\subsection*{Configuration (.env)}
+
+La couche d'intention se paramètre via trois variables d'environnement :
+
+\begin{lstlisting}
+GEMINI_API_KEY=...            # cle gratuite (aistudio.google.com/apikey)
+GEMINI_MODEL=gemini-2.5-flash # modele valide pour cette cle
+INTENT_PROVIDER=auto          # auto | gemini | openai | rules
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{auto} : essaie Gemini, puis OpenAI, puis le repli local par règles
+  \item Sans clé (ou hors-ligne), le repli local par regex assure le fonctionnement
+\end{itemize}
+
+\subsection*{Mode Focus (Pomodoro) — Sessions chronométrées}
+
+Interface riche pour les sessions focus / Pomodoro :
+
+\begin{itemize}
+  \item \texttt{startPomodoro(text)} : parse la durée (« 50 min », « 1h30 », « demi-heure »…), crée une session
+  \item \texttt{parseDuration(raw)} : extraction tolérante de la durée (gère les fautes « mindre », « minutes »…), défaut 25 min
+  \item \texttt{recordSession(p, status)} : enregistre en base la session terminée (label, min planifiées, min réalisées, statut)
+\end{itemize}
+
+Affichage :
+\begin{itemize}
+  \item Bandeau de statistiques : Total, Actif, Terminé, X min cumulées
+  \item Anneau dégradé cyan→indigo animé (circonférence SVG avec stroke-dashoffset)
+  \item Chrono géant \texttt{MM:SS} avec statut (« ● En cours — 50M » / « ⏸ En pause »)
+  \item Historique des sessions : liste scrollable (statut, min réalisées/prévues, date) + « Tout effacer »
+  \item Boutons : Pause/Reprendre, \textbf{Terminer} (enregistre comme \texttt{done}), Arrêter (enregistre comme \texttt{stopped})
+\end{itemize}
+
+Commandes vocales / texte :
+\begin{itemize}
+  \item « \textbf{démarrer un focus de 50 min} » → lance 50 min auto
+  \item « \textbf{démarrer un focus mode} » (sans durée) → 25 min auto
+  \item « \textbf{arrête le focus} », « \textbf{stop focus} » → arrête et enregistre
+\end{itemize}
 
 % ─────────────────────────────────────────────
 \section{En résumé}

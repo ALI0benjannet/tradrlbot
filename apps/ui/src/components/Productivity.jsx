@@ -1,6 +1,122 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { fetchProductivity, saveProductivity, classifyIntent } from '../lib/api';
+import { fetchProductivity, saveProductivity, classifyIntent, transcribeAudio } from '../lib/api';
+
+// ===== Hook personnalisé : Saisie vocale via enregistrement audio + STT serveur =====
+// Web Speech API ne fonctionne pas dans Electron (pas de service Google embarqué).
+// On enregistre donc l'audio avec MediaRecorder puis on l'envoie à la couche IA
+// (Gemini / Whisper) qui renvoie la transcription.
+function useSpeechRecognition(onFinalTranscript) {
+  const [isListening, setIsListening] = useState(false);   // enregistrement en cours
+  const [isProcessing, setIsProcessing] = useState(false); // transcription en cours
+  const [error, setError] = useState(null);
+
+  const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const chunksRef = useRef([]);
+  // Référence STABLE vers le callback pour éviter les fermetures périmées.
+  const callbackRef = useRef(onFinalTranscript);
+  useEffect(() => { callbackRef.current = onFinalTranscript; }, [onFinalTranscript]);
+
+  const isSupported = typeof navigator !== 'undefined'
+    && !!navigator.mediaDevices?.getUserMedia
+    && typeof window !== 'undefined' && 'MediaRecorder' in window;
+
+  // Libère le micro proprement.
+  const releaseStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    mediaRecorderRef.current = null;
+    chunksRef.current = [];
+  }, []);
+
+  // Nettoyage au démontage (évite les fuites micro).
+  useEffect(() => () => releaseStream(), [releaseStream]);
+
+  // Convertit un Blob en base64 (sans le préfixe data:).
+  const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result || '';
+      const base64 = String(result).split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+  const start = useCallback(async () => {
+    if (!isSupported) {
+      setError("Micro non supporté par cet environnement.");
+      return;
+    }
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+      const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const type = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type });
+        releaseStream();
+
+        if (blob.size === 0) { setIsProcessing(false); return; }
+
+        setIsProcessing(true);
+        try {
+          const base64 = await blobToBase64(blob);
+          const cleanMime = type.split(';')[0]; // "audio/webm;codecs=opus" → "audio/webm"
+          const { text } = await transcribeAudio(base64, cleanMime);
+          const transcript = (text || '').trim();
+          if (!transcript || transcript.startsWith('[STT')) {
+            setError("Transcription vide : configure la clé IA ou réessaie.");
+          } else if (callbackRef.current) {
+            callbackRef.current(transcript);
+          }
+        } catch (err) {
+          console.error('Erreur transcription :', err);
+          setError("Échec de la transcription (couche IA injoignable ?).");
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+
+      recorder.start();
+      setIsListening(true);
+    } catch (err) {
+      console.error('Accès micro refusé :', err);
+      releaseStream();
+      setIsListening(false);
+      setError("Accès au micro refusé. Autorise le microphone.");
+    }
+  }, [isSupported, releaseStream]);
+
+  const stop = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop(); // déclenche onstop → transcription
+    }
+    setIsListening(false);
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (isListening) stop();
+    else start();
+  }, [isListening, start, stop]);
+
+  return { isListening, isProcessing, interimTranscript: '', error, toggle, isSupported };
+}
 
 const FEATURES = [
   { id: 'tasks',     label: 'Gérer tâches et to-do lists', icon: '✅', color: '#a855f7', placeholder: 'Écrire une tâche…' },
@@ -11,6 +127,7 @@ const FEATURES = [
 ];
 
 const ALARM_LEAD_MS = 10 * 60 * 1000; // 10 minutes avant
+const REMINDER_KEEP_MS = 60 * 1000;   // on garde un rappel 1 min après son heure, puis suppression auto
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
 // ----- Récurrence -----
@@ -61,7 +178,14 @@ function buildOccurrences(startISO, freq, count, opts = {}) {
 // Extrait une DATE (JJ/MM/AAAA ou JJ/MM) + une HEURE (15.20 / 15:20 / 15h20) + une récurrence depuis le texte
 function parseDateTime(raw) {
   const dm = raw.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/); // date
-  const tm = raw.match(/(\d{1,2})\s*[:hH.]\s*(\d{2})/);         // heure
+  const tm = raw.match(/(\d{1,2})\s*[:hH.]\s*(\d{2})/);         // heure avec minutes (15:20, 15h20…)
+  // Heure SEULE suivie de am/pm ou de « h » : « 4 pm », « 16h », « 9 heures »
+  const hourOnly = !tm ? raw.match(/(?<![\d:])(\d{1,2})\s*(?:h\b|heures?\b|(?=\s*[ap]\.?\s*m\.?\b))/i) : null;
+  // Marqueur AM / PM (anglais) — gère « pm », « p.m. », « p m »
+  const mer = raw.match(/\b([ap])\.?\s*m\.?\b/i);
+  // Moment de la journée en français
+  const frPM = /\b(apr[èe]s[- ]?midi|soir|du soir)\b/i.test(raw);
+  const frAM = /\b(matin|du matin)\b/i.test(raw);
   const rec = parseRecurrence(raw);                            // récurrence
 
   const d = new Date();
@@ -73,8 +197,16 @@ function parseDateTime(raw) {
     if (year < 100) year += 2000;
     d.setFullYear(year, month, day);
   }
-  if (tm) {
-    d.setHours(Math.min(23, parseInt(tm[1], 10)), Math.min(59, parseInt(tm[2], 10)), 0, 0);
+  // Détermine l'heure (en gérant AM/PM)
+  let hours = null, minutes = 0;
+  if (tm) { hours = parseInt(tm[1], 10); minutes = parseInt(tm[2], 10); }
+  else if (hourOnly) { hours = parseInt(hourOnly[1], 10); minutes = 0; }
+  if (hours !== null) {
+    const isPM = (mer && mer[1].toLowerCase() === 'p') || frPM;
+    const isAM = (mer && mer[1].toLowerCase() === 'a') || frAM;
+    if (isPM && hours < 12) hours += 12; // 4 pm -> 16h
+    if (isAM && hours === 12) hours = 0; // 12 am -> 00h
+    d.setHours(Math.min(23, hours), Math.min(59, minutes), 0, 0);
   } else {
     d.setHours(9, 0, 0, 0); // heure par défaut si non précisée
   }
@@ -82,12 +214,28 @@ function parseDateTime(raw) {
   // (sauf pour un événement récurrent : on démarre la série dès aujourd'hui)
   if (!dm && !rec && d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
 
-  // Nettoie le libellé (date, heure, mots de récurrence et petits mots)
+  // Nettoie le libellé (date, heure, am/pm, mots de récurrence et mots parasites)
   let label = raw;
   if (dm) label = label.replace(dm[0], '');
   if (tm) label = label.replace(tm[0], '');
+  else if (hourOnly) label = label.replace(hourOnly[0], '');
+  if (mer) label = label.replace(mer[0], '');
   if (rec) label = label.replace(rec.matched, '');
-  label = label.replace(/\b(le|à|a|vers|pour|du|j'ai|jai)\b\s*/gi, '').trim() || 'Rendez-vous';
+
+  // 1. Normalise les apostrophes : la voix peut envoyer ' (U+2019) au lieu de ' (U+0027)
+  label = label.replace(/[''`]/g, "'");
+
+  // 2. Retire l'introduction vocale en DÉBUT de phrase : "j'ai [un/une]"
+  //    On garde les adjectifs ("petite", "grande"…) car ils font partie du libellé voulu.
+  label = label.replace(/^(j'ai|jai|j')\s+(?:un[e]?\s+)?/i, '');
+
+  // 3. Retire les prépositions/articles ORPHELINS restants (laissés par la suppression
+  //    de la date ou de l'heure). On utilise \s au lieu de \b car \b ne fonctionne pas
+  //    avec les caractères accentués (à, é…).
+  label = label
+    .replace(/(?:^|\s+)(?:le|la|les|du|des|au|aux|à|a|de|vers|pour|sur|par)(?=\s|$)/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || 'Rendez-vous';
 
   return { label, at: d.toISOString(), hasDate: !!dm, recurrence: rec };
 }
@@ -151,12 +299,23 @@ export default function Productivity({ onSend }) {
   const [calMonth, setCalMonth] = useState(() => {     // mois affiché dans l'agenda
     const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d;
   });
+  const [selectedDay, setSelectedDay] = useState(null); // jour sélectionné dans le calendrier
 
   const inputRef = useRef(null);
   const audioCtxRef = useRef(null);
   const remindersRef = useRef(items.reminders);
   const pomoRef = useRef(null);
 
+  // ===== Reconnaissance vocale (Web Speech API) =====
+  // Callback : quand la reconnaissance vocale finalise, on remplit le champ input et on envoie
+  const handleVoiceTranscript = async (transcript) => {
+    const text = transcript.trim();
+    if (text) {
+      // Saisie vocale : ajout automatique dans l'agenda ET les rappels.
+      await handleSubmitText(text, { forceAgenda: true });
+    }
+  };
+  const { isListening, isProcessing, error: voiceError, toggle: toggleVoice, isSupported: voiceSupported } = useSpeechRecognition(handleVoiceTranscript);
   const feature = FEATURES.find((f) => f.id === active) ?? FEATURES[0];
 
   useEffect(() => { remindersRef.current = items.reminders; }, [items.reminders]);
@@ -213,7 +372,7 @@ export default function Productivity({ onSend }) {
     if (!('speechSynthesis' in window)) return;
     const synth = window.speechSynthesis;
     synth.cancel();
-    const u = new SpeechSynthesisUtterance(`${label} !! `.repeat(3));
+    const u = new SpeechSynthesisUtterance(label);
     u.lang = 'fr-FR';
     u.rate = 1;
     u.pitch = 1.1;
@@ -270,6 +429,17 @@ export default function Productivity({ onSend }) {
           reminders: prev.reminders.map((r) =>
             due.some((d) => d.id === r.id) ? { ...r, alarmed: true } : r
           ),
+        }));
+      }
+      // Suppression automatique des anciens rappels (heure dépassée)
+      const expired = remindersRef.current.filter(
+        (r) => r.at && t > new Date(r.at).getTime() + REMINDER_KEEP_MS
+      );
+      if (expired.length > 0) {
+        const expiredIds = new Set(expired.map((r) => r.id));
+        setItems((prev) => ({
+          ...prev,
+          reminders: prev.reminders.filter((r) => !expiredIds.has(r.id)),
         }));
       }
       // Fin de session focus
@@ -418,10 +588,18 @@ export default function Productivity({ onSend }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    unlockAudio();
     const text = input.trim();
     if (!text) return;
+    await handleSubmitText(text);
     setInput('');
+    inputRef.current?.focus();
+  };
+
+  // Traite la soumission d'un texte (réutilisé par submit ET reconnaissance vocale)
+  // opts.forceAgenda : pour la saisie VOCALE, tout ajout va automatiquement
+  // dans l'agenda ET les rappels (liés), quelle que soit la classification.
+  const handleSubmitText = async (text, opts = {}) => {
+    unlockAudio();
 
     // Compréhension d'intention (Gemini → OpenAI → repli local par règles).
     let intent = null;
@@ -433,7 +611,14 @@ export default function Productivity({ onSend }) {
 
     const validTarget = (t) => FEATURES.some((f) => f.id === t);
     const action = intent?.action || 'add';
-    const target = intent?.target && validTarget(intent.target) ? intent.target : active;
+    let target = intent?.target && validTarget(intent.target) ? intent.target : active;
+
+    // Saisie vocale : un simple ajout est routé vers l'agenda (→ agenda + rappel).
+    // On respecte quand même les commandes vocales « arrête le focus », « supprime… ».
+    if (opts.forceAgenda && action === 'add' && target !== 'pomodoro') {
+      target = 'agenda';
+    }
+
     const tLabel = FEATURES.find((f) => f.id === target)?.label.toLowerCase() ?? target;
 
     if (target === 'pomodoro') {
@@ -454,11 +639,13 @@ export default function Productivity({ onSend }) {
       setFeedback({ kind: 'info', msg: `Voici ${tLabel}` });
     } else {
       const added = addToTarget(target, intent?.content || text);
-      setFeedback({ kind: 'add', msg: `✓ « ${added} » ajouté à ${tLabel}` });
+      // Message dédié pour la voix : on précise agenda + rappel.
+      setFeedback(opts.forceAgenda && target === 'agenda'
+        ? { kind: 'add', msg: `✓ « ${added} » ajouté à l'agenda et aux rappels` }
+        : { kind: 'add', msg: `✓ « ${added} » ajouté à ${tLabel}` });
     }
 
     onSend?.(text);
-    inputRef.current?.focus();
   };
 
   // Supprime UNE occurrence dans l'agenda ET les rappels (éléments liés)
@@ -615,7 +802,7 @@ export default function Productivity({ onSend }) {
           <div className="min-h-0 flex-1 overflow-auto p-4">
             {/* ---- VUE AGENDA (calendrier) ---- */}
             {active === 'agenda' ? (
-              <div className="flex h-full flex-col gap-3">
+              <div className="flex flex-col gap-3">
                 {/* Navigation mois */}
                 <div className="flex items-center justify-between">
                   <button onClick={() => setCalMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))} className="rounded-lg px-3 py-1.5 text-sm text-gray-400 ring-1 ring-white/10 hover:bg-white/5">‹ Préc.</button>
@@ -633,22 +820,102 @@ export default function Productivity({ onSend }) {
                     const evs = eventsForDay(date);
                     const isToday = sameDay(date, new Date());
                     const isSunday = date.getDay() === 0;
+                    const isSelected = selectedDay && sameDay(date, selectedDay);
                     return (
-                      <div key={i} className={`min-h-[76px] rounded-lg p-1.5 ring-1 ${isToday ? 'bg-brand/10 ring-brand/40' : isSunday ? 'bg-surface-900/20 ring-white/5' : 'bg-surface-900/40 ring-white/5'}`}>
-                        <div className={`mb-1 text-xs ${isToday ? 'font-bold text-brand' : isSunday ? 'text-gray-600' : 'text-gray-500'}`}>{date.getDate()}</div>
+                      <div
+                        key={i}
+                        onClick={() => setSelectedDay(isSelected ? null : date)}
+                        className={`min-h-[76px] cursor-pointer rounded-lg p-1.5 ring-1 transition-all ${
+                          isSelected     ? 'bg-indigo-500/20 ring-indigo-400/60 shadow-lg' :
+                          isToday        ? 'bg-brand/10 ring-brand/40' :
+                          isSunday       ? 'bg-surface-900/20 ring-white/5' :
+                          'bg-surface-900/40 ring-white/5 hover:bg-white/5'
+                        }`}
+                      >
+                        <div className={`mb-1 text-xs font-semibold ${isSelected ? 'text-indigo-300' : isToday ? 'text-brand' : isSunday ? 'text-gray-600' : 'text-gray-500'}`}>
+                          {date.getDate()}
+                        </div>
                         <div className="flex flex-col gap-1">
-                          {evs.map((e) => (
-                            <div key={e.id} title={`${fmtTime(e.at)} — ${e.label}${e.recLabel ? ` (🔁 ${e.recLabel})` : ''}`} onClick={() => removeEvent(e.id)}
-                                 className="cursor-pointer truncate rounded bg-brand/20 px-1.5 py-0.5 text-[10px] text-white hover:bg-red-500/30">
+                          {evs.slice(0, 2).map((e) => (
+                            <div key={e.id}
+                                 title={`${fmtTime(e.at)} — ${e.label}${e.recLabel ? ` (🔁 ${e.recLabel})` : ''}`}
+                                 className="truncate rounded bg-brand/20 px-1.5 py-0.5 text-[10px] text-white">
                               {e.recId ? '🔁 ' : ''}{fmtTime(e.at)} {e.label}
                             </div>
                           ))}
+                          {evs.length > 2 && (
+                            <div className="px-1 text-[10px] text-gray-500">+{evs.length - 2} autres</div>
+                          )}
                         </div>
                       </div>
                     );
                   })}
                 </div>
-                <p className="text-xs text-gray-600">Astuce : tape « pause chaque jour à 13h » (ou « chaque jrs ») pour remplir tout le mois automatiquement, sauf les dimanches. Clique sur un rendez-vous pour supprimer cette occurrence.</p>
+
+                {/* ---- PANNEAU DÉTAIL DU JOUR SÉLECTIONNÉ ---- */}
+                <AnimatePresence>
+                  {selectedDay && (() => {
+                    const dayEvs  = eventsForDay(selectedDay);
+                    // Uniquement les tâches créées CE jour précis (pas toutes les tâches)
+                    const dayTasks = items.tasks.filter(
+                      (t) => t.createdAt && sameDay(new Date(t.createdAt), selectedDay)
+                    );
+                    const dayLabel = selectedDay.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+                    return (
+                      <motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 12 }}
+                        className="rounded-xl bg-surface-800 ring-1 ring-white/10 p-4"
+                      >
+                        {/* En-tête */}
+                        <div className="mb-3 flex items-center justify-between">
+                          <h4 className="text-sm font-semibold capitalize text-white">📅 {dayLabel}</h4>
+                          <button onClick={() => setSelectedDay(null)} className="text-gray-500 hover:text-white">✕</button>
+                        </div>
+
+                        {/* Événements du jour */}
+                        {dayEvs.length > 0 ? (
+                          <div className="mb-3">
+                            <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Agenda</p>
+                            <div className="flex flex-col gap-1.5">
+                              {dayEvs.map((e) => (
+                                <div key={e.id} className="flex items-center justify-between rounded-lg bg-brand/10 px-3 py-2 ring-1 ring-brand/20">
+                                  <div>
+                                    <span className="text-sm text-white">{e.recId ? '🔁 ' : ''}{e.label}</span>
+                                    <span className="ml-2 text-xs text-gray-400">{fmtTime(e.at)}</span>
+                                    {e.recLabel && <span className="ml-1 text-xs text-indigo-400">({e.recLabel})</span>}
+                                  </div>
+                                  <button onClick={(ev) => { ev.stopPropagation(); removeEvent(e.id); }}
+                                          className="ml-2 rounded px-2 py-1 text-gray-500 hover:bg-red-500/10 hover:text-red-400" title="Supprimer">✕</button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mb-3 text-sm text-gray-600">Aucun événement ce jour.</p>
+                        )}
+
+                        {/* Tâches en cours */}
+                        {dayTasks.length > 0 && (
+                          <div>
+                            <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Tâches</p>
+                            <div className="flex flex-col gap-1">
+                              {dayTasks.map((t) => (
+                                <div key={t.id} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5">
+                                  <span className="text-xs text-purple-400">✅</span>
+                                  <span className="text-sm text-gray-300">{t.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </motion.div>
+                    );
+                  })()}
+                </AnimatePresence>
+
+                <p className="text-xs text-gray-600">Clique sur un jour pour voir ses événements et tâches. Clique sur ✕ dans le détail pour supprimer un événement.</p>
               </div>
             /* ---- VUE RAPPELS ---- */
             ) : active === 'reminders' ? (
@@ -657,8 +924,7 @@ export default function Productivity({ onSend }) {
               ) : (
                 <table className="w-full border-collapse text-sm">
                   <thead>
-                    <tr className="text-left text-xs uppercase trackje besoin de voire quelque chose comme ca
-                    ing-wider text-gray-500">
+                    <tr className="text-left text-xs uppercase tracking-wider text-gray-500">
                       <th className="px-3 py-2">Rendez-vous</th>
                       <th className="px-3 py-2">Date</th>
                       <th className="px-3 py-2">Heure</th>
@@ -817,17 +1083,79 @@ export default function Productivity({ onSend }) {
           </div>
 
           {/* Saisie + Envoyer */}
-          <form onSubmit={submit} className="flex shrink-0 gap-3 border-t border-white/5 p-4">
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={feature.placeholder}
-              className="flex-1 rounded-xl bg-surface-900 px-4 py-3 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-brand"
-              style={ { caretColor: '#6366f1' } }
-            />
-            <button type="submit" className="rounded-xl bg-brand px-5 py-3 text-sm font-medium text-white transition hover:bg-brand-dark">Envoyer</button>
-          </form>
+          <div className="shrink-0 border-t border-white/5">
+            {/* Bandeau d'erreur vocale (ex : micro refusé, réseau, non supporté) */}
+            <AnimatePresence>
+              {voiceError && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mx-4 mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300 ring-1 ring-red-500/30"
+                >
+                  ⚠️ {voiceError}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <form onSubmit={submit} className="flex gap-3 p-4">
+              {/* Indicateur d'état vocal : écoute ou transcription en cours */}
+              {(isListening || isProcessing) && (
+                <motion.div
+                  className={`shrink-0 self-center text-sm flex items-center gap-1 ${isListening ? 'text-red-400' : 'text-brand'}`}
+                  animate={{ opacity: [0.4, 1] }}
+                  transition={{ duration: 0.6, repeat: Infinity }}
+                >
+                  {isListening ? '🎙️ Écoute…' : '⏳ Transcription…'}
+                </motion.div>
+              )}
+
+              {/* Champ input (désactivé pendant l'écoute / la transcription) */}
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={isListening ? 'Parlez maintenant…' : (isProcessing ? 'Transcription en cours…' : feature.placeholder)}
+                className="flex-1 rounded-xl bg-surface-900 px-4 py-3 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-brand disabled:opacity-60"
+                style={ { caretColor: '#6366f1' } }
+                disabled={isListening || isProcessing}
+              />
+
+              {/* Bouton micro avec halo + pulsation */}
+              {voiceSupported ? (
+                <div className="relative shrink-0 self-center">
+                  {/* Halo animé visible uniquement en écoute */}
+                  {isListening && (
+                    <motion.span
+                      className="absolute inset-0 rounded-xl bg-red-500"
+                      initial={{ opacity: 0.5, scale: 1 }}
+                      animate={{ opacity: 0, scale: 1.8 }}
+                      transition={{ duration: 1.2, repeat: Infinity, ease: 'easeOut' }}
+                    />
+                  )}
+                  <motion.button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); toggleVoice(); }}
+                    aria-label="Saisie vocale"
+                    aria-pressed={isListening}
+                    disabled={isProcessing}
+                    title={isListening ? 'Arrêter l’écoute' : 'Parler'}
+                    className={`relative z-10 rounded-xl px-5 py-3 text-base outline-none ring-1 transition focus:ring-2 focus:ring-brand disabled:opacity-50 ${
+                      isListening
+                        ? 'bg-red-600 ring-red-400/60 shadow-lg shadow-red-500/30'
+                        : 'bg-surface-800 ring-white/10 hover:bg-surface-700'
+                    }`}
+                    animate={isListening ? { scale: [1, 1.15, 1] } : { scale: 1 }}
+                    transition={isListening ? { duration: 0.8, repeat: Infinity } : { duration: 0.2 }}
+                  >
+                    {isProcessing ? '⏳' : '🎤'}
+                  </motion.button>
+                </div>
+              ) : null}
+
+              <button type="submit" className="shrink-0 rounded-xl bg-brand px-5 py-3 text-sm font-medium text-white transition hover:bg-brand-dark">Envoyer</button>
+            </form>
+          </div>
         </div>
       </div>
     </div>

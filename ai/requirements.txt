@@ -19,4 +19,4 @@ nltk==3.9.1             # tokenisation / corpora pour TextBlob
 # Sans lui, l'extraction d'entités bascule automatiquement sur des règles regex.
 
 # STT/TTS locaux optionnels :
-# faster-whisper==1.0.3
+faster-whisper>=1.2.1  # STT 100% local (voix → texte, sans quota) - wheels Python 3.13

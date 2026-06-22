@@ -21,7 +21,11 @@ class Settings(BaseSettings):
     # "auto" = Gemini puis OpenAI puis règles. Forcer avec "gemini" / "openai" / "rules".
     intent_provider: str = os.getenv("INTENT_PROVIDER", "auto")
 
+    # --- STT (reconnaissance vocale) ---
+    # "local" = faster-whisper hors-ligne ; "gemini"/"openai" pour forcer le cloud.
+    stt_provider: str = os.getenv("STT_PROVIDER", "local")
     whisper_model: str = os.getenv("WHISPER_MODEL", "base")
+    whisper_compute: str = os.getenv("WHISPER_COMPUTE", "int8")
     tts_provider: str = os.getenv("TTS_PROVIDER", "openai")
     tts_voice: str = os.getenv("TTS_VOICE", "alloy")
     chroma_path: str = os.getenv("CHROMA_PATH", "./data/chroma")

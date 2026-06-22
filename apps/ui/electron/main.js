@@ -54,6 +54,17 @@ ipcMain.handle('app:toggleMaximize', () => {
 app.whenReady().then(() => {
   createWindow();
 
+  // Autorise l'accès au micro/média (nécessaire pour la reconnaissance vocale)
+  const { session } = require('electron');
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'microphone' || permission === 'audioCapture') {
+      return callback(true);
+    }
+    callback(true);
+  });
+  // Vérifie aussi les permissions « check » (getUserMedia)
+  session.defaultSession.setPermissionCheckHandler(() => true);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

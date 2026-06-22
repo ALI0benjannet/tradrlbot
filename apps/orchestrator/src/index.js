@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { routeCommand } from './router/commandRouter.js';
-import { analyzeText, classifyProductivityIntent } from './services/aiClient.js';
+import { analyzeText, classifyProductivityIntent, transcribe } from './services/aiClient.js';
 import { getHistory, getState, setState } from './data/db.js';import { getSettings, saveSettings } from './data/settings.js';
 import { getService, listServices } from '../../../services/index.js';
 import { runDesktopAction, listDesktopActions } from './desktop/index.js';
@@ -89,6 +89,18 @@ app.post('/api/productivity/intent', async (req, res) => {
   if (!text) return res.status(400).json({ error: 'text requis' });
   try {
     const result = await classifyProductivityIntent(text, active ?? null);
+    res.json(result);
+  } catch (err) {
+    res.status(503).json({ error: 'Couche IA indisponible', detail: String(err) });
+  }
+});
+
+// Transcription vocale (STT) — relais vers FastAPI (Gemini / Whisper).
+app.post('/api/stt', async (req, res) => {
+  const { audio, mime } = req.body ?? {};
+  if (!audio) return res.status(400).json({ error: 'audio requis' });
+  try {
+    const result = await transcribe(audio, mime ?? 'audio/webm');
     res.json(result);
   } catch (err) {
     res.status(503).json({ error: 'Couche IA indisponible', detail: String(err) });

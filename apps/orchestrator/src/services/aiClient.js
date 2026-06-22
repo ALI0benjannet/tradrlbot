@@ -33,11 +33,11 @@ export async function classifyProductivityIntent(text, active = null) {
   return res.json(); // { action, target, content, query, engine }
 }
 
-export async function transcribe(audioBase64) {
+export async function transcribe(audioBase64, mime = 'audio/webm') {
   const res = await fetch(`${AI_URL}/api/stt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audio: audioBase64 }),
+    body: JSON.stringify({ audio: audioBase64, mime }),
   });
   if (!res.ok) throw new Error(`AI service ${res.status}`);
   return res.json(); // { text }

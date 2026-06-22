@@ -80,6 +80,17 @@ export async function classifyIntent(text, active = null) {
   return res.json();
 }
 
+// Transcription vocale : envoie l'audio (base64) à la couche IA, renvoie { text }.
+export async function transcribeAudio(audioBase64, mime = 'audio/webm') {
+  const res = await fetch(`${ORCH_HTTP}/api/stt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audio: audioBase64, mime }),
+  });
+  if (!res.ok) throw new Error(`Orchestrateur: ${res.status}`);
+  return res.json(); // { text }
+}
+
 // Connexion temps réel : statut de l'assistant, événements, transcriptions.
 export function connectRealtime({ onMessage, onStatus } = {}) {
   let ws;

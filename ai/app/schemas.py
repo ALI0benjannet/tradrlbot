@@ -49,6 +49,7 @@ class ActionIntentResponse(BaseModel):
 
 class STTRequest(BaseModel):
     audio: str  # audio encodé en base64
+    mime: str = "audio/webm"  # type MIME de l'audio enregistré
 
 
 class STTResponse(BaseModel):

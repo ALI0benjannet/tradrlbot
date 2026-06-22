@@ -39,14 +39,24 @@ LIST_KEYWORDS = r"\b(liste|affiche|montre|voir|quels?|quelles?)\b"
 
 SYSTEM_INSTRUCTION = (
     "Tu es un routeur d'intention pour une application de productivité en français. "
+    "L'utilisateur peut écrire ou parler dans N'IMPORTE QUELLE langue (français, arabe, "
+    "anglais, etc.). Tu DOIS TOUJOURS produire un \"content\" et un \"query\" EN FRANÇAIS "
+    "(traduis si nécessaire).\n"
     "À partir d'une phrase de l'utilisateur, renvoie UNIQUEMENT un objet JSON valide "
     "(sans texte autour, sans balises markdown) avec ces clés :\n"
     '- "action" : un de "add", "delete", "complete", "list", "unknown".\n'
     '- "target" : un de "tasks", "reminders", "agenda", "pomodoro", "projects" ou null.\n'
-    '- "content" : pour "add", le texte de l\'élément à créer (sans le verbe d\'action). '
-    "Conserve les dates/heures (ex: \"lundi à 14h\").\n"
-    '- "query" : pour "delete"/"complete", les mots qui identifient l\'élément visé.\n\n'
-    "Règles : 'tâche/todo' -> tasks ; 'rappel/alarme' -> reminders ; "
+    '- "content" : pour "add", le texte de l\'élément à créer EN FRANÇAIS (sans le verbe '
+    "d'action).\n"
+    '- "query" : pour "delete"/"complete", les mots EN FRANÇAIS qui identifient l\'élément.\n\n'
+    "NORMALISATION DES DATES/HEURES (très important) : convertis TOUTE expression de date "
+    "ou d'heure (même écrite en lettres ou en arabe/anglais) en CHIFFRES dans le content :\n"
+    "- l'heure au format 24h \"HH:MM\" (ex: \"trois heures et demie de l'après-midi\" -> "
+    "\"15:30\" ; arabe \"الساعة الثالثة و38 دقيقة مساءً\" -> \"15:38\" ; anglais "
+    "\"half past three pm\" -> \"15:30\").\n"
+    "- la date au format \"JJ/MM/AAAA\" (ou \"JJ/MM\") si une date précise est donnée.\n"
+    "Garde le reste du libellé traduit en français autour de l'heure/date.\n\n"
+    "Règles cible : 'tâche/todo' -> tasks ; 'rappel/alarme' -> reminders ; "
     "'rdv/rendez-vous/réunion/agenda' -> agenda ; 'pomodoro/focus' -> pomodoro ; "
     "'projet' -> projects. Si le contexte actif est fourni et qu'aucune cible n'est "
     "explicite, utilise le contexte actif.\n"
@@ -56,9 +66,17 @@ SYSTEM_INSTRUCTION = (
     'Phrase: "supprime le rdv de demain" -> '
     '{"action":"delete","target":"agenda","content":"","query":"demain"}\n'
     'Phrase: "j\'ai réunion lundi à 14h avec Paul" -> '
-    '{"action":"add","target":"agenda","content":"réunion lundi à 14h avec Paul","query":""}\n'
+    '{"action":"add","target":"agenda","content":"réunion lundi à 14:00 avec Paul","query":""}\n'
+    'Phrase arabe: "يجب عليك الخروج في تمام الساعة الثالثة و38 دقيقة مساءً" -> '
+    '{"action":"add","target":"agenda","content":"sortir à 15:38","query":""}\n'
+    'Phrase arabe: "أضف مهمة شراء الخبز" -> '
+    '{"action":"add","target":"tasks","content":"acheter du pain","query":""}\n'
+    'Phrase anglaise: "remind me to call John at 6 pm" -> '
+    '{"action":"add","target":"reminders","content":"appeler John à 18:00","query":""}\n'
+    'Phrase anglaise: "add a task buy milk" -> '
+    '{"action":"add","target":"tasks","content":"acheter du lait","query":""}\n'
     'Phrase: "rappelle-moi de prendre mes clés à 18h" -> '
-    '{"action":"add","target":"reminders","content":"prendre mes clés à 18h","query":""}\n'
+    '{"action":"add","target":"reminders","content":"prendre mes clés à 18:00","query":""}\n'
     'Phrase: "démarre un focus de 50 min" -> '
     '{"action":"add","target":"pomodoro","content":"focus de 50 min","query":""}\n'
     'Phrase: "démarre un focus mode" (sans durée) -> '

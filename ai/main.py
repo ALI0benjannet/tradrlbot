@@ -19,7 +19,7 @@ from app.schemas import (
     ActionIntentRequest,
     ActionIntentResponse,
 )
-from app.stt import transcribe
+from app.stt import transcribe, warm_up_whisper
 from app.nlu import detect_intent
 from app.tts import synthesize
 from app.memory import remember, recall
@@ -38,6 +38,15 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def _preload_models() -> None:
+    """Charge le modèle Whisper en arrière-plan dès le démarrage pour que la
+    première transcription ne bloque pas (téléchargement/chargement)."""
+    import threading
+
+    threading.Thread(target=warm_up_whisper, daemon=True).start()
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "layer": "ai"}
@@ -45,7 +54,7 @@ def health():
 
 @app.post("/api/stt", response_model=STTResponse)
 def stt(req: STTRequest):
-    text = transcribe(req.audio)
+    text = transcribe(req.audio, req.mime)
     return STTResponse(text=text)
 
 
