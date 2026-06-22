@@ -45,6 +45,11 @@ const DESKTOP_RULES = [
     re: /(?:liste|montre|affiche|contenu).*(?:dossier|repertoire|fichiers|contenu).*(?:bureau|desktop|documents|telechargements|downloads)/i,
     map: (m, text) => ({ action: 'files.list', params: { path: parseLocation(text) } }),
   },
+  // Ouvrir un dossier/fichier précis : "ouvre le dossier tp sur le bureau"
+{
+  re: /(?:ouvr\w*|acced\w*|va\s+(?:dans|au|a)|affiche[rz]?|montre[rz]?)\b.*\b(?:dossier|repertoire|folder|fichier)\b/i,
+  map: (m, text) => ({ action: 'files.open', params: { path: parseDeletePath(text) } }),
+},
   // Variante courte : "liste le bureau", "montre le contenu du bureau"
   {
     re: /(?:liste|montre|affiche|ouvre).*(?:bureau|desktop|documents|telechargements|downloads)/i,
@@ -82,8 +87,7 @@ const DESKTOP_RULES = [
   },
   // Supprimer : confirm:true car la suppression est explicitement demandée
   {
-    re: /(?:supprime[rz]?|efface[rz]?|enleve|retire|jette)\b.*\b(dossier|repertoire|folder|fichier)/i,
-    map: (m, text) => ({ action: 'files.delete', params: { path: parseDeletePath(text), confirm: true } }),
+re: /(?:supprime[rz]?|efface[rz]?|enleve|retire|jette)\b.*\b(doss?ier|repertoire|folder|fichier)/i,    map: (m, text) => ({ action: 'files.delete', params: { path: parseDeletePath(text), confirm: true } }),
   },
 
   // Applications (testées en dernier car très permissives)
@@ -158,12 +162,68 @@ function parseDeletePath(text) {
   const base = parseLocation(text);
   return base ? `${base}/${name}` : name;
 }
+// --- Tolérance aux fautes de frappe / orthographe ---
+const COMMAND_KEYWORDS = [
+  'ouvre','ouvrir','ferme','fermer','quitte','lance','lancer','demarre','execute',
+  'supprime','supprimer','efface','effacer','enleve','retire','jette',
+  'cree','creer','crie','crier','nouveau','nouvelle','ajoute',
+  'renomme','rebaptise','deplace','bouge','ecris','ecrire','note','enregistre',
+  'liste','lister','montre','affiche','afficher','contenu','accede',
+  'monte','augmente','hausse','baisse','diminue','reduis','coupe','mute','silence',
+  'regle','regler','fixe','verrouille','minimise','maximise','agrandis','eteins',
+  'dossier','repertoire','fichier','folder','bureau','desktop','documents',
+  'telechargements','downloads','volume','son','sound','luminosite','brillance',
+  'ecran','screen','fenetre','fenetres','application','applications','session',
+  'veille','ordinateur','calculatrice','navigateur','explorateur','terminal',
+  'parametres','reglages',
+];
 
+// Distance de Levenshtein (nombre min. d'éditions entre deux mots).
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let cur = new Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    [prev, cur] = [cur, prev];
+  }
+  return prev[n];
+}
+
+// Seuil selon la longueur : plus le mot est court, plus on est strict
+// (pour ne JAMAIS corrompre un nom de dossier court comme "tp").
+function maxEdits(len) {
+  if (len < 5) return 0;   // le, la, tp, sur… : jamais corrigés
+  if (len <= 7) return 1;  // burea→bureau, dosier→dossier, suprime→supprime
+  return 2;                // mots longs : 2 fautes tolérées
+}
+
+// Corrige chaque mot vers le mot-clé le plus proche (s'il est assez proche).
+function fuzzyCorrect(text) {
+  return text.replace(/[a-zA-Z]+/g, (word) => {
+    const lower = word.toLowerCase();
+    const limit = maxEdits(lower.length);
+    if (limit === 0) return word;
+    if (COMMAND_KEYWORDS.includes(lower)) return word;
+    let best = null, bestDist = Infinity;
+    for (const kw of COMMAND_KEYWORDS) {
+      if (Math.abs(kw.length - lower.length) > limit) continue;
+      const d = levenshtein(lower, kw);
+      if (d < bestDist) { bestDist = d; best = kw; }
+    }
+    return best && bestDist > 0 && bestDist <= limit ? best : word;
+  });
+}
 export async function routeCommand(text, ctx = {}) {
   ctx.broadcast?.({ type: 'state', state: 'thinking' });
 
-  const normalized = stripAccents(text);
-
+const normalized = fuzzyCorrect(stripAccents(text));
   // 1) Règles bureau locales (rapides, hors-ligne)
   for (const rule of DESKTOP_RULES) {
     const match = normalized.match(rule.re);

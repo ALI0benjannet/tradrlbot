@@ -48,6 +48,7 @@ const ACTIONS = {
   'files.write': (p) => files.writeTextFile(p.path, p.content),
   'files.move': (p) => files.moveItem(p.from, p.to),
   'files.delete': (p) => files.deleteItem(p.path, p),
+  'files.open': (p) => files.openItem(p.path),
 
   // Clavier / souris
   'input.type': (p) => input.typeText(p.text),

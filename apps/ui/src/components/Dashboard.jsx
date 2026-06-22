@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import Avatar from './Avatar.jsx';
-import { analyzeText } from '../lib/api.js';
+import { analyzeText, transcribeAudio } from '../lib/api.js';
 
 // Capacités du bureau affichées sous l'avatar (cliquables → envoie la commande).
 const CAPABILITIES = [
@@ -38,6 +38,59 @@ export default function Dashboard({ status, assistantState, onSend, messages, ca
   const [intent, setIntent] = useState(null);
   const inputRef = useRef(null);
   const endRef = useRef(null);
+  // --- Entrée vocale (micro → STT) ---
+const [recording, setRecording] = useState(false);
+const [transcribing, setTranscribing] = useState(false);
+const recorderRef = useRef(null);
+const chunksRef = useRef([]);
+
+const blobToDataUrl = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+const startRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    chunksRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+      setTranscribing(true);
+      try {
+        const dataUrl = await blobToDataUrl(blob);
+        const { text } = await transcribeAudio(dataUrl, blob.type);
+        if (text && !text.startsWith('[STT')) {
+          onSend(text); // envoie directement la commande dictée
+        }
+      } catch (err) {
+        console.error('Transcription échouée :', err);
+      } finally {
+        setTranscribing(false);
+      }
+    };
+    recorderRef.current = recorder;
+    recorder.start();
+    setRecording(true);
+  } catch (err) {
+    alert('Micro inaccessible : ' + err.message);
+  }
+};
+
+const stopRecording = () => {
+  recorderRef.current?.stop();
+  setRecording(false);
+};
+
+const toggleRecording = () => (recording ? stopRecording() : startRecording());
 
   // Capacités affichées : celles de la catégorie, sinon le contrôle complet du bureau.
   const capabilities =
@@ -201,6 +254,19 @@ export default function Dashboard({ status, assistantState, onSend, messages, ca
               className="flex-1 rounded-xl bg-surface-900 px-4 py-3 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-2 focus:ring-brand"
               style={{ caretColor: '#6366f1' }}
             />
+              <button
+                type="button"
+                onClick={toggleRecording}
+                disabled={transcribing}
+                title={recording ? 'Arrêter l’enregistrement' : 'Parler'}
+                className={`rounded-xl px-4 py-3 text-base ring-1 transition ${
+                  recording
+                    ? 'bg-red-500/20 text-red-300 ring-red-500/40 animate-pulse'
+                    : 'bg-surface-900 text-gray-300 ring-white/10 hover:text-white'
+                }`}
+              >
+                  {transcribing ? '⏳' : recording ? '⏹' : '🎤'}
+              </button>
             <button
               type="submit"
               className="rounded-xl bg-brand px-5 py-3 text-sm font-medium text-white transition hover:bg-brand-dark"

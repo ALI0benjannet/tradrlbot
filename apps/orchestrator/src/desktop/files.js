@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { ok, fail } from './platform.js';
+import { openPath } from './apps.js';
 
 // Opérations fichiers/dossiers via le module `fs` de Node.
 // Sécurité : toutes les opérations sont confinées au dossier personnel de
@@ -90,4 +91,16 @@ export async function deleteItem(target, { confirm = false } = {}) {
   } catch (err) {
     return fail(`Suppression impossible : ${err.message}`);
   }
+  
+}
+// Ouvre un dossier ou un fichier avec l'application par défaut du système.
+export async function openItem(target) {
+  const item = resolveSafe(target);
+  if (!item) return fail('Chemin hors du dossier personnel autorisé.');
+  try {
+    await fs.access(item);
+  } catch {
+    return fail(`Introuvable : ${target}.`);
+  }
+  return openPath(item);
 }
