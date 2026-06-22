@@ -260,6 +260,34 @@ function parseDuration(raw) {
   return 25; // défaut Pomodoro
 }
 
+// Retire les préfixes de commande (FR/EN) pour ne garder que le vrai libellé.
+function stripCommandPrefix(raw) {
+  let out = String(raw || '').replace(/[’`]/g, "'").trim();
+  if (!out) return out;
+
+  const patterns = [
+    /^\s*(?:please\s+|svp\s+)?(?:add|ajoute\w*|create|cr[ée]e\w*|new|nouveau|nouvelle|note|mets?|put|insert)\b[:\s-]*/i,
+    /^\s*(?:please\s+|svp\s+)?(?:modify\w*|modif\w*|change\w*|update|rename|renomm\w*|edit\w*|replace|remplace\w*)\b[:\s-]*/i,
+    /^\s*(?:please\s+|svp\s+)?(?:delete|remove|suppr\w*|supp\b|supprime\w*|retire\w*|efface\w*)\b[:\s-]*/i,
+    /^\s*(?:task|tasks|t[âa]che|todo|to-?do|project|projects|projet|rdv|rendez-?vous|meeting|event|reminder|rappel)s?\b[:\s-]*/i,
+    /^\s*(?:named|name|with\s+name|avec\s+le\s+nom|nomm?[ée]?|nom)\b[:\s-]*/i,
+    // French colloquial prefixes: "je vais tache", "ais tache", "j'ai tache"
+    /^\s*(?:je\s+vais\s+)?t[âa]che\s+/i,
+    /^\s*(?:ais|j'ai|j'ais)\s+t[âa]che\s+/i,
+  ];
+
+  // On répète plusieurs passes pour gérer "add task named ...".
+  for (let i = 0; i < 4; i++) {
+    const before = out;
+    for (const re of patterns) out = out.replace(re, '');
+    out = out.replace(/^\s*(?:de|du|des|la|le|les|un|une|the|a|an)\b\s*/i, '');
+    out = out.replace(/\s+/g, ' ').replace(/^[\s\-:,.]+|[\s\-:,.]+$/g, '');
+    if (out === before) break;
+  }
+
+  return out || String(raw || '').trim();
+}
+
 // Nettoie le libellé d'une session focus (retire verbes, "focus", durée…)
 function cleanFocusLabel(raw) {
   return raw
@@ -506,10 +534,11 @@ export default function Productivity({ onSend }) {
   // Ajoute un élément dans la bonne liste (gère agenda/rappels + récurrence).
   const addToTarget = (target, text) => {
     const base = { id: crypto?.randomUUID?.() ?? String(Date.now()), createdAt: new Date().toISOString() };
+    const cleanedText = stripCommandPrefix(text);
 
     if (target === 'reminders' || target === 'agenda') {
-      // Un rendez-vous va dans l'AGENDA *et* dans les RAPPELS (même id pour les lier)
-      const { label, at, recurrence } = parseDateTime(text);
+      // Un rendez-vous va dans l'AGENDA, les RAPPELS et les TACHES (même id pour les lier)
+      const { label, at, recurrence } = parseDateTime(cleanedText);
       if (Notification?.permission === 'default') Notification.requestPermission();
 
       if (recurrence) {
@@ -529,6 +558,7 @@ export default function Productivity({ onSend }) {
           ...prev,
           agenda:    [...prev.agenda,    ...agendaItems],
           reminders: [...prev.reminders, ...reminderItems2],
+          tasks:     [...prev.tasks,     ...agendaItems.map((it) => ({ id: it.id, createdAt: it.createdAt, text: it.label }))],
         }));
       } else {
         // Événement unique
@@ -536,6 +566,7 @@ export default function Productivity({ onSend }) {
           ...prev,
           agenda:    [...prev.agenda,    { ...base, label, at }],
           reminders: [...prev.reminders, { ...base, label, at, alarmed: false }],
+          tasks:     [...prev.tasks,     { ...base, text: label }],
         }));
       }
 
@@ -545,8 +576,22 @@ export default function Productivity({ onSend }) {
       return label;
     }
 
-    setItems((prev) => ({ ...prev, [target]: [...prev[target], { ...base, text }] }));
-    return text;
+    if (target === 'tasks') {
+      // Une tâche est aussi visible dans l'agenda/rappels pour garder les vues synchronisées.
+      const { label, at } = parseDateTime(cleanedText);
+      setItems((prev) => ({
+        ...prev,
+        tasks:     [...prev.tasks, { ...base, text: cleanedText }],
+        agenda:    [...prev.agenda, { ...base, label, at }],
+        reminders: [...prev.reminders, { ...base, label, at, alarmed: false }],
+      }));
+      const evDate = new Date(at);
+      setCalMonth(new Date(evDate.getFullYear(), evDate.getMonth(), 1));
+      return cleanedText;
+    }
+
+    setItems((prev) => ({ ...prev, [target]: [...prev[target], { ...base, text: cleanedText }] }));
+    return cleanedText;
   };
 
   // Cherche l'élément le plus pertinent dans une liste à partir d'une requête.
@@ -579,11 +624,68 @@ export default function Productivity({ onSend }) {
           ...prev,
           agenda: prev.agenda.filter((it) => it.id !== removed.id),
           reminders: prev.reminders.filter((it) => it.id !== removed.id),
+          tasks: prev.tasks.filter((it) => it.id !== removed.id),
+        };
+      }
+      if (target === 'tasks') {
+        return {
+          ...prev,
+          tasks: prev.tasks.filter((_, i) => i !== idx),
+          agenda: prev.agenda.filter((it) => it.id !== removed.id),
+          reminders: prev.reminders.filter((it) => it.id !== removed.id),
         };
       }
       return { ...prev, [target]: list.filter((_, i) => i !== idx) };
     });
     return removedLabel;
+  };
+
+  // Modifie un élément (trouvé par requête) en remplaçant son texte / libellé.
+  const updateInTarget = (target, query, newText) => {
+    let updatedLabel = null;
+    setItems((prev) => {
+      const list = prev[target] || [];
+      const idx = findMatch(list, query);
+      if (idx < 0) return prev;
+      const old = list[idx];
+
+      // Agenda / rappels : on re-parse la date + l'heure du nouveau texte.
+      if (target === 'agenda' || target === 'reminders') {
+        const cleanedNewText = stripCommandPrefix(newText);
+        const { label, at } = parseDateTime(cleanedNewText);
+        updatedLabel = label;
+        const applyAgenda = (it) => (it.id === old.id ? { ...it, label, at } : it);
+        const applyReminder = (it) => (it.id === old.id ? { ...it, label, at, alarmed: false } : it);
+        const applyTask = (it) => (it.id === old.id ? { ...it, text: cleanedNewText } : it);
+        return {
+          ...prev,
+          agenda: prev.agenda.map(applyAgenda),
+          reminders: prev.reminders.map(applyReminder),
+          tasks: prev.tasks.map(applyTask),
+        };
+      }
+
+      if (target === 'tasks') {
+        const cleanedNewText = stripCommandPrefix(newText);
+        const { label, at } = parseDateTime(cleanedNewText);
+        updatedLabel = cleanedNewText;
+        const nextTasks = list.map((it, i) => (i === idx ? { ...it, text: cleanedNewText } : it));
+        const applyAgenda = (it) => (it.id === old.id ? { ...it, label, at } : it);
+        const applyReminder = (it) => (it.id === old.id ? { ...it, label, at, alarmed: false } : it);
+        return {
+          ...prev,
+          tasks: nextTasks,
+          agenda: prev.agenda.map(applyAgenda),
+          reminders: prev.reminders.map(applyReminder),
+        };
+      }
+
+      // Tâches / projets : on remplace simplement le texte.
+      updatedLabel = newText;
+      const next = list.map((it, i) => (i === idx ? { ...it, text: newText } : it));
+      return { ...prev, [target]: next };
+    });
+    return updatedLabel;
   };
 
   const submit = async (e) => {
@@ -634,6 +736,11 @@ export default function Productivity({ onSend }) {
       setFeedback(removed
         ? { kind: 'del', msg: `🗑 « ${removed} » supprimé de ${tLabel}` }
         : { kind: 'warn', msg: `Aucun élément trouvé à supprimer dans ${tLabel}` });
+    } else if (action === 'update') {
+      const updated = updateInTarget(target, intent?.query || '', intent?.content || text);
+      setFeedback(updated
+        ? { kind: 'add', msg: `✏️ « ${updated} » mis à jour dans ${tLabel}` }
+        : { kind: 'warn', msg: `Aucun élément trouvé à modifier dans ${tLabel}` });
     } else if (action === 'list') {
       setActive(target);
       setFeedback({ kind: 'info', msg: `Voici ${tLabel}` });

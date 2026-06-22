@@ -40,7 +40,7 @@ class ActionIntentRequest(BaseModel):
 
 
 class ActionIntentResponse(BaseModel):
-    action: str   # add | delete | complete | list | unknown
+    action: str   # add | delete | complete | list | update | unknown
     target: str | None
     content: str
     query: str

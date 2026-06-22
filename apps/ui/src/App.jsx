@@ -4,7 +4,8 @@ import Dashboard from './components/Dashboard.jsx';
 import History from './components/History.jsx';
 import Settings from './components/Settings.jsx';
 import Productivity from './components/Productivity.jsx';
-import { connectRealtime, sendCommand } from './lib/api.js';
+import { classifyIntent, connectRealtime, fetchProductivity, saveProductivity, sendCommand } from './lib/api.js';
+import { applyIntentToProductivity, classifyIntentLocal } from './lib/productivitySync.js';
 
 // Catégories de la barre latérale (regroupées par section).
 const CATEGORIES = {
@@ -137,13 +138,48 @@ export default function App() {
     return () => rtRef.current?.close();
   }, []);
 
-  const handleSend = async (text) => {
+  const syncDashboardProductivity = async (text) => {
+    let intent = null;
+    try {
+      intent = await classifyIntent(text, 'tasks');
+    } catch {
+      intent = null;
+    }
+
+    const fallback = classifyIntentLocal(text, 'tasks');
+
+    if (!intent || !['add', 'delete', 'complete', 'update'].includes(intent.action)) {
+      intent = fallback;
+    } else if (intent.action === 'update' && (!intent.query || !intent.content)) {
+      intent = {
+        ...intent,
+        query: intent.query || fallback.query,
+        content: intent.content || fallback.content,
+      };
+    }
+
+    if (!intent || !['add', 'delete', 'complete', 'update'].includes(intent.action)) return;
+
+    const current = await fetchProductivity();
+    const { changed, items } = applyIntentToProductivity(current, intent, text, 'tasks');
+    if (changed) await saveProductivity(items);
+  };
+
+  const handleSend = async (text, opts = {}) => {
+    const source = opts?.source || 'dashboard';
     setMessages((m) => [...m, { role: 'user', text }]);
     setAssistantState('thinking');
+
+    const syncPromise = source === 'productivity'
+      ? Promise.resolve()
+      : syncDashboardProductivity(text).catch(() => {});
+
     try {
       const res = await sendCommand(text);
+      await syncPromise;
       setMessages((m) => [...m, { role: 'assistant', text: res.response }]);
     } catch (e) {
+      await syncPromise;
       setMessages((m) => [
         ...m,
         { role: 'assistant', text: `⚠️ Orchestrateur indisponible (${e.message}).` },
@@ -222,13 +258,13 @@ export default function App() {
             transition={{ duration: 0.2 }}
             className="h-full"
           >
-            {tab === 'productivity' && <Productivity onSend={handleSend} />}
+            {tab === 'productivity' && <Productivity onSend={(text) => handleSend(text, { source: 'productivity' })} />}
             {(tab === 'dashboard' ||
               (CATEGORIES[tab] && tab !== 'productivity')) && (
               <Dashboard
                 status={status}
                 assistantState={assistantState}
-                onSend={handleSend}
+                onSend={(text) => handleSend(text, { source: 'dashboard' })}
                 messages={messages}
                 category={CATEGORIES[tab]}
               />

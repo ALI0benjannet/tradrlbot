@@ -20,7 +20,7 @@ import re
 
 from .config import get_settings
 
-ACTIONS = {"add", "delete", "complete", "list", "unknown"}
+ACTIONS = {"add", "delete", "complete", "list", "update", "unknown"}
 TARGETS = {"tasks", "reminders", "agenda", "pomodoro", "projects"}
 
 # Mots-clés -> cible (utilisés par le repli local et pour deviner la cible)
@@ -33,9 +33,10 @@ TARGET_KEYWORDS = {
 }
 
 ADD_KEYWORDS = r"\b(ajoute|ajouter|cr[ée]e?|cr[ée]er|nouvelle?|nouveau|planifie|programme|note|j'ai|jai|met|mets|ajout|d[ée]marr?e?r?|d[ée]mare?r?|lance?r?|commenc[er]+|start|démarre)\b"
-DELETE_KEYWORDS = r"\b(supprime|supprimer|enl[èe]ve|enlever|retire|retirer|efface|effacer|annule|annuler|supprim|arr[êe]te|arr[êe]ter|arrete|stop|stoppe|stopper|termine|coupe|finis)\b"
+DELETE_KEYWORDS = r"\b(supprime|supprimer|suppr\w*|supp\b|enl[èe]ve|enlever|retire|retirer|efface|effacer|annule|annuler|supprim|arr[êe]te|arr[êe]ter|arrete|stop|stoppe|stopper|termine|coupe|finis)\b"
 COMPLETE_KEYWORDS = r"\b(termin[ée]?|fini[es]?|fait[es]?|coch[ée]?|valide|valider|accompli)\b"
 LIST_KEYWORDS = r"\b(liste|affiche|montre|voir|quels?|quelles?)\b"
+UPDATE_KEYWORDS = r"\b(modifie\w*|change\w*|remplace\w*|renomm\w*|corrige\w*|édite\w*|edit\w*|mets?\s+à\s+jour|mise\s+à\s+jour|update|rename|modif\w*)\b"
 
 SYSTEM_INSTRUCTION = (
     "Tu es un routeur d'intention pour une application de productivité en français. "
@@ -44,7 +45,9 @@ SYSTEM_INSTRUCTION = (
     "(traduis si nécessaire).\n"
     "À partir d'une phrase de l'utilisateur, renvoie UNIQUEMENT un objet JSON valide "
     "(sans texte autour, sans balises markdown) avec ces clés :\n"
-    '- "action" : un de "add", "delete", "complete", "list", "unknown".\n'
+    '- "action" : un de "add", "delete", "complete", "list", "update", "unknown".\n'
+    '- pour "update" (modifier) : "query" = mots EN FRANÇAIS qui identifient l\'élément '
+    '"existant à changer, et \"content\" = le NOUVEAU texte EN FRANÇAIS.\n"'
     '- "target" : un de "tasks", "reminders", "agenda", "pomodoro", "projects" ou null.\n'
     '- "content" : pour "add", le texte de l\'élément à créer EN FRANÇAIS (sans le verbe '
     "d'action).\n"
@@ -83,6 +86,12 @@ SYSTEM_INSTRUCTION = (
     '{"action":"add","target":"pomodoro","content":"focus","query":""}\n'
     'Phrase: "arrête le focus mode" -> '
     '{"action":"delete","target":"pomodoro","content":"","query":""}\n'
+    'Phrase: "modifie la tâche pain en acheter du lait" -> '
+    '{"action":"update","target":"tasks","query":"pain","content":"acheter du lait"}\n'
+    'Phrase anglaise: "rename task meet to meet with manel" -> '
+    '{"action":"update","target":"tasks","query":"meet","content":"meet avec manel"}\n'
+    'Phrase: "remplace le rdv de lundi par réunion mardi à 10h" -> '
+    '{"action":"update","target":"agenda","query":"lundi","content":"réunion mardi à 10:00"}\n'
 )
 
 
@@ -167,7 +176,9 @@ def _classify_rules(text: str, active: str | None) -> dict:
     """Repli local hors-ligne : détection par mots-clés (regex)."""
     lowered = text.lower()
 
-    if re.search(DELETE_KEYWORDS, lowered):
+    if re.search(UPDATE_KEYWORDS, lowered):
+        action = "update"
+    elif re.search(DELETE_KEYWORDS, lowered):
         action = "delete"
     elif re.search(COMPLETE_KEYWORDS, lowered):
         action = "complete"
@@ -187,7 +198,7 @@ def _classify_rules(text: str, active: str | None) -> dict:
 
     # Nettoie le texte des verbes d'action pour obtenir le contenu/la requête
     cleaned = re.sub(
-        f"({ADD_KEYWORDS}|{DELETE_KEYWORDS}|{COMPLETE_KEYWORDS}|{LIST_KEYWORDS})",
+        f"({ADD_KEYWORDS}|{DELETE_KEYWORDS}|{COMPLETE_KEYWORDS}|{LIST_KEYWORDS}|{UPDATE_KEYWORDS})",
         "",
         text,
         flags=re.IGNORECASE,
@@ -195,11 +206,29 @@ def _classify_rules(text: str, active: str | None) -> dict:
     cleaned = re.sub(r"\b(une?|le|la|les|du|de|des|mon|ma|mes|moi|ce|cet|cette)\b", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:,")
 
+    if action == "add":
+        content_val, query_val = cleaned, ""
+    elif action in {"delete", "complete"}:
+        content_val, query_val = "", cleaned
+    elif action == "update":
+        # Prioritize 'en' or 'par' as separators (most common in French for updates)
+        parts = re.split(r"\s+(?:en|par)\s+", cleaned, maxsplit=1, flags=re.IGNORECASE)
+        if len(parts) < 2:
+            # Fallback to other separators if no 'en' or 'par' found
+            parts = re.split(r"\s+(?:vers|avec|->|:)\s+", cleaned, maxsplit=1, flags=re.IGNORECASE)
+        
+        if len(parts) == 2:
+            query_val, content_val = parts[0].strip(), parts[1].strip()
+        else:
+            query_val, content_val = "", cleaned  # pas de séparateur : tout = nouveau texte
+    else:
+        content_val, query_val = "", ""
+
     return {
         "action": action,
         "target": target,
-        "content": cleaned if action == "add" else "",
-        "query": cleaned if action in {"delete", "complete"} else "",
+        "content": content_val,
+        "query": query_val,
         "engine": "rules",
     }
 
