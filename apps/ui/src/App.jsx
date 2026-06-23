@@ -5,7 +5,7 @@ import History from './components/History.jsx';
 import Settings from './components/Settings.jsx';
 import Productivity from './components/Productivity.jsx';
 import { classifyIntent, connectRealtime, fetchProductivity, saveProductivity, sendCommand } from './lib/api.js';
-import { applyIntentToProductivity, classifyIntentLocal } from './lib/productivitySync.js';
+import { applyIntentToProductivity, classifyIntentLocal, isFocusCommand } from './lib/productivitySync.js';
 
 // Catégories de la barre latérale (regroupées par section).
 const CATEGORIES = {
@@ -124,7 +124,7 @@ export default function App() {
   const [assistantState, setAssistantState] = useState('idle');
   const [messages, setMessages] = useState([]);
   const rtRef = useRef(null);
-
+  const [focusRequest, setFocusRequest] = useState(null); // commande focus venue du Dashboard
   useEffect(() => {
     rtRef.current = connectRealtime({
       onStatus: setStatus,
@@ -167,6 +167,16 @@ export default function App() {
 
   const handleSend = async (text, opts = {}) => {
     const source = opts?.source || 'dashboard';
+
+    // Commande de focus tapée dans le Dashboard : on bascule vers la
+    // Productivité (Pomodoro) qui lance/arrête la session automatiquement.
+    if (source === 'dashboard' && isFocusCommand(text)) {
+      setMessages((m) => [...m, { role: 'user', text }]);
+      setTab('productivity');
+      setFocusRequest({ text, nonce: Date.now() });
+      return;
+    }
+
     setMessages((m) => [...m, { role: 'user', text }]);
     setAssistantState('thinking');
 
@@ -258,7 +268,7 @@ export default function App() {
             transition={{ duration: 0.2 }}
             className="h-full"
           >
-            {tab === 'productivity' && <Productivity onSend={(text) => handleSend(text, { source: 'productivity' })} />}
+            {tab === 'productivity' && <Productivity onSend={(text) => handleSend(text, { source: 'productivity' })} focusRequest={focusRequest} />}
             {(tab === 'dashboard' ||
               (CATEGORIES[tab] && tab !== 'productivity')) && (
               <Dashboard

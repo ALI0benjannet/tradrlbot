@@ -230,3 +230,9 @@ export function applyIntentToProductivity(currentItems, intent, rawText, default
 
   return { changed: false, items };
 }
+
+// Détecte si un texte est une commande de focus / pomodoro
+// (« start focus one minute », « lance un focus de 25 min », « stop focus »…).
+export function isFocusCommand(text) {
+  return /\b(focus|pomodoro|concentration|deep\s*work)\b/i.test(String(text || ''));
+}

@@ -240,11 +240,35 @@ function parseDateTime(raw) {
   return { label, at: d.toISOString(), hasDate: !!dm, recurrence: rec };
 }
 
+// Nombres écrits en toutes lettres (FR + EN) → valeur numérique.
+const WORD_NUMBERS = {
+  un: 1, une: 1, one: 1, deux: 2, two: 2, trois: 3, three: 3, quatre: 4, four: 4,
+  cinq: 5, five: 5, six: 6, sept: 7, seven: 7, huit: 8, eight: 8, neuf: 9, nine: 9,
+  dix: 10, ten: 10, onze: 11, eleven: 11, douze: 12, twelve: 12, treize: 13, thirteen: 13,
+  quatorze: 14, fourteen: 14, quinze: 15, fifteen: 15, seize: 16, sixteen: 16,
+  vingt: 20, twenty: 20, trente: 30, thirty: 30, quarante: 40, forty: 40,
+  cinquante: 50, fifty: 50, soixante: 60, sixty: 60,
+};
+const WORD_NUMBER_RE = new RegExp(`\\b(${Object.keys(WORD_NUMBERS).join('|')})\\b`, 'i');
+
+// Convertit un nombre écrit en lettres présent dans le texte (ex : "twenty five" → 25).
+function wordToNumber(t) {
+  // "vingt-cinq", "twenty five", "quarante cinq"…
+  const compound = t.match(/\b(vingt|trente|quarante|cinquante|twenty|thirty|forty|fifty)[\s-]+(un|une|one|deux|two|trois|three|quatre|four|cinq|five|six|sept|seven|huit|eight|neuf|nine)\b/i);
+  if (compound) return WORD_NUMBERS[compound[1].toLowerCase()] + WORD_NUMBERS[compound[2].toLowerCase()];
+  const single = t.match(WORD_NUMBER_RE);
+  if (single) return WORD_NUMBERS[single[1].toLowerCase()];
+  return null;
+}
+
 // Extrait une DURÉE en minutes depuis un texte libre (tolère les fautes de frappe).
-// Gère : "50min", "50 minutes", "50m", "1h30", "2h", "25", "une demi-heure"…
+// Gère : "50min", "50 minutes", "50m", "1h30", "2h", "25", "une demi-heure",
+// "one minute", "five minutes", "vingt-cinq minutes", "two hours"…
 function parseDuration(raw) {
   const t = raw.toLowerCase();
+  if (/\btrois[- ]quarts?[- ]d['e]?\s*heure\b/.test(t)) return 45;
   if (/\bdemi[- ]?heure\b/.test(t)) return 30;
+  if (/\bquart[- ]d['e]?\s*heure\b/.test(t)) return 15;
   // "1h30", "1 h 30"
   const hm = t.match(/(\d{1,2})\s*h\s*(\d{1,2})/);
   if (hm) return parseInt(hm[1], 10) * 60 + parseInt(hm[2], 10);
@@ -252,11 +276,17 @@ function parseDuration(raw) {
   const h = t.match(/(\d{1,2})\s*(?:h\b|heures?\b)/);
   if (h) return parseInt(h[1], 10) * 60;
   // "50 min", "50min", "50 minutes", "50m" (tolère "mindre", "minute", etc.)
-  const m = t.match(/(\d{1,3})\s*m/);
+  const m = t.match(/(\d{1,3})\s*m(?:in|n|inute)?/);
   if (m) return parseInt(m[1], 10);
   // juste un nombre -> minutes
   const n = t.match(/\b(\d{1,3})\b/);
   if (n) return parseInt(n[1], 10);
+  // Nombre écrit en lettres + unité (« two hours », « deux heures »).
+  const word = wordToNumber(t);
+  if (word !== null) {
+    if (/\b(heures?|hours?|hrs?|h)\b/.test(t)) return word * 60;
+    return word; // par défaut : minutes (« one minute », « five »)
+  }
   return 25; // défaut Pomodoro
 }
 
@@ -292,7 +322,10 @@ function stripCommandPrefix(raw) {
 function cleanFocusLabel(raw) {
   return raw
     .replace(/(\d{1,3})\s*(?:h\s*\d{0,2}|min(?:ute)?s?|m|heures?)/gi, '')
-    .replace(/\b(d[ée]marr?e?r?|d[ée]mare?r?|lance?r?|commenc\w*|start|focus|mode|session|pomodoro|concentration|un|une|de|d'|pendant|pour)\b/gi, '')
+    .replace(/\b(?:trois[- ]quarts?[- ]d['e]?\s*heure|demi[- ]?heure|quart[- ]d['e]?\s*heure)\b/gi, '')
+    .replace(WORD_NUMBER_RE, ' ')
+    .replace(/\b(minutes?|mins?|mn|heures?|hours?|hrs?)\b/gi, '')
+    .replace(/\b(d[ée]marr?e?r?|d[ée]mare?r?|lance?r?|commenc\w*|start|stop|arr[êe]te?r?|focus|mode|session|pomodoro|concentration|un|une|de|d'|pendant|pour)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -313,7 +346,7 @@ function buildCalendar(monthDate) {
   return cells;
 }
 
-export default function Productivity({ onSend }) {
+export default function Productivity({ onSend, focusRequest }) {
   const [active, setActive] = useState('tasks');
   const [input, setInput] = useState('');
   const [items, setItems] = useState(() =>
@@ -349,6 +382,16 @@ export default function Productivity({ onSend }) {
   useEffect(() => { remindersRef.current = items.reminders; }, [items.reminders]);
   useEffect(() => { pomoRef.current = pomo; }, [pomo]);
   useEffect(() => { inputRef.current?.focus(); }, [active]);
+
+  // Commande de focus envoyée depuis le Dashboard : on lance la session ici.
+  const lastFocusNonce = useRef(null);
+  useEffect(() => {
+    if (focusRequest && focusRequest.nonce !== lastFocusNonce.current && focusRequest.text) {
+      lastFocusNonce.current = focusRequest.nonce;
+      handleSubmitText(focusRequest.text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest]);
 
   // ----- Persistance en base (chargement au démarrage) -----
   const loadedRef = useRef(false);
@@ -715,6 +758,11 @@ export default function Productivity({ onSend }) {
     const action = intent?.action || 'add';
     let target = intent?.target && validTarget(intent.target) ? intent.target : active;
 
+    // Détecte une commande de focus / pomodoro même hors de l'onglet Pomodoro
+    // (« start focus one minute », « lance un focus de 25 min », « stop focus »…).
+    const isFocusText = /\b(focus|pomodoro|concentration|deep\s*work)\b/i.test(text);
+    if (isFocusText) target = 'pomodoro';
+
     // Saisie vocale : un simple ajout est routé vers l'agenda (→ agenda + rappel).
     // On respecte quand même les commandes vocales « arrête le focus », « supprime… ».
     if (opts.forceAgenda && action === 'add' && target !== 'pomodoro') {
@@ -724,9 +772,17 @@ export default function Productivity({ onSend }) {
     const tLabel = FEATURES.find((f) => f.id === target)?.label.toLowerCase() ?? target;
 
     if (target === 'pomodoro') {
-      if (action === 'delete' || action === 'complete') {
-        stopPomodoro();
-        setFeedback({ kind: 'del', msg: '⏹ Session focus arrêtée' });
+      // Stop : « stop », « arrête », « termine », ou action delete/complete.
+      const wantsStop = action === 'delete' || action === 'complete'
+        || /\b(stop|arr[êe]te?r?|termine?r?|fin(?:is|ir)?|annule?r?|cancel|end|pause)\b/i.test(text);
+      setActive('pomodoro');
+      if (wantsStop) {
+        if (pomoRef.current) {
+          stopPomodoro();
+          setFeedback({ kind: 'del', msg: '⏹ Session focus arrêtée' });
+        } else {
+          setFeedback({ kind: 'warn', msg: 'Aucune session focus en cours' });
+        }
       } else {
         const label = startPomodoro(intent?.content || text);
         setFeedback({ kind: 'add', msg: `🍅 Focus lancé : ${label}` });
